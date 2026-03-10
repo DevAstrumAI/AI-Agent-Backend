@@ -1,0 +1,132 @@
+Datenschutzerklärung 
+ functiomed AG, Langgrütstrasse 112, 8047 Zürich 
+ Stand: 2026 
+ 1. Einleitung 
+ Diese Datenschutzerklärung erläutert, wie die functiomed AG personenbezogene Daten beim Besuch unserer Website sowie bei der Nutzung unserer digitalen Dienstleistungen verarbeitet. 
+ Mit der Nutzung unserer Website erklärst du dich mit dieser Datenschutzerklärung einverstanden. 
+ Die functiomed AG verarbeitet personenbezogene Daten gemäss dem Schweizer Datenschutzgesetz (DSG) und – soweit anwendbar – der DSGVO. 
+ Unsere Online-Angebote richten sich primär an Personen mit Wohnsitz in der Schweiz. 
+ 2. Erhebung von allgemeinen Daten (Server-Logfiles) 
+ Beim Besuch unserer Website werden automatisch technische Informationen erfasst: 
+ 
+ Browsertyp und -version 
+ Betriebssystem 
+ Referrer-URL 
+ aufgerufene Unterseiten 
+ Datum und Uhrzeit des Zugriffs 
+ IP-Adresse 
+ Internet-Service-Provider 
+ sicherheitsrelevante technische Informationen 
+ 
+ Diese Daten dienen: 
+ 
+ dem sicheren Betrieb der Website 
+ der technischen Fehleranalyse 
+ dem Schutz der IT-Infrastruktur 
+ statistischen Auswertungen 
+ der Optimierung unseres Online-Angebots 
+ 
+ Die Daten werden nicht zur Identifikation von Personen verwendet und nach Zweckentfall gelöscht. 
+ 3. Cookies & ähnliche Technologien 
+ Die Website der functiomed AG nutzt Cookies, um: 
+ 
+ die Benutzerfreundlichkeit zu erhöhen 
+ technische Funktionen bereitzustellen 
+ die Website laufend zu verbessern 
+ 
+ Einige Cookies stammen von Drittanbietern wie: 
+ 
+ Google (Analytics) 
+ YouTube 
+ Vimeo 
+ 
+ Du kannst Cookies jederzeit über deinen Browser blockieren oder löschen, wobei gewisse Funktionen eingeschränkt sein können. 
+ 4. Einsatz von Drittanbietern 
+ 4.1 Google Analytics 
+ Unsere Website kann Google Analytics einsetzen. Dabei werden folgende Daten verarbeitet: 
+ 
+ Nutzungsverhalten 
+ technische Browserdaten 
+ Referrer-Informationen 
+ IP-Adresse (gekürzt) 
+ 
+ Daten können auf Server ausserhalb der Schweiz übertragen werden. 
+Google verarbeitet diese Informationen gemäss eigener Datenschutzrichtlinien. 
+ Opt-out: https://tools.google.com/dlpage/gaoptout?hl=de 
+ 4.2 Einbindung von Videos (YouTube / Vimeo) 
+ Beim Abspielen eines Videos werden Nutzungs- und Gerätedaten automatisch an den jeweiligen Anbieter übermittelt. 
+ Datenschutzrichtlinien: 
+ 
+ YouTube/Google: https://policies.google.com/privacy 
+ Vimeo: https://vimeo.com/privacy 
+ 
+ Die functiomed AG hat keinen Einfluss auf die Datenverarbeitung dieser Anbieter. 
+ 4.3 Social Media Plugins (LinkedIn, Instagram, YouTube) 
+ Unsere Website kann Schaltflächen zu folgenden Plattformen enthalten: 
+ 
+ LinkedIn 
+ Instagram 
+ YouTube 
+ 
+ Beim Anklicken werden Daten (z. B. IP-Adresse, URL des Besuchs) an den jeweiligen Anbieter übertragen. 
+ Wenn du nicht möchtest, dass Social-Media-Anbieter dein Nutzungsverhalten deinem Profil zuordnen, logge dich vor Nutzung aus deinem Konto aus. 
+ 4.4 Chatbot der functiomed AG (AWS – Amazon Web Services) 
+ Unsere Website verwendet einen digitalen Chatbot, um Nutzer*innen bei Fragen und Anliegen zu unterstützen. 
+ Dabei können folgende Daten verarbeitet werden: 
+ 
+ technische Daten (z. B. IP-Adresse, Browserinformationen) 
+ eingegebene Nachrichten und Inhalte 
+ Nutzungs- und Interaktionsdaten 
+ 
+ Der Chatbot wird über Amazon Web Services (AWS) betrieben. 
+AWS kann Daten in Rechenzentren in der Schweiz, der EU oder – abhängig von technischen Anforderungen – in weiteren Ländern verarbeiten. 
+ Die Datenverarbeitung erfolgt gemäss den Datensicherheitsstandards von AWS: 
+ https://aws.amazon.com/privacy/ 
+ Die functiomed AG hat mit AWS einen Vertrag zur Auftragsverarbeitung abgeschlossen. 
+AWS verarbeitet Daten ausschliesslich im Auftrag der functiomed AG und nicht für eigene Zwecke. 
+ Die Eingabe medizinisch sensibler Informationen über den Chatbot wird nicht empfohlen. 
+ 5. Newsletter 
+ Wenn du dich für unseren Newsletter anmeldest, verarbeitet die functiomed AG folgende Daten: 
+ 
+ E-Mail-Adresse 
+ Name 
+ 
+ Der Versand erfolgt durch functiomed AG oder einen beauftragten Dienstleister. 
+Eine Abmeldung ist jederzeit möglich; danach löschen wir deine Daten, sofern keine gesetzlichen Aufbewahrungspflichten bestehen. 
+ 6. Kontaktaufnahme 
+ Bei Kontaktaufnahme über ein Formular, per E-Mail oder andere elektronische Kommunikation werden die übermittelten Daten ausschliesslich zur Bearbeitung deiner Anfrage genutzt. 
+ Bitte sende keine sensiblen medizinischen Informationen über unverschlüsselte E-Mail-Kommunikation. 
+ 7. Nutzung und Weitergabe personenbezogener Daten 
+ Die functiomed AG verarbeitet personenbezogene Daten nur für: 
+ 
+ Betrieb & Optimierung der Website 
+ technische Sicherheit 
+ Auswertung der Nutzung 
+ Bearbeitung von Anfragen 
+ Versand des Newsletters 
+ Betrieb des Chatbots 
+ 
+ Eine Weitergabe an Dritte erfolgt nur: 
+ 
+ mit deiner Zustimmung 
+ wenn es gesetzlich vorgeschrieben ist 
+ zur Sicherstellung des technischen Betriebs (z. B. Hosting, Chatbot, Newsletter-Partner) 
+ 
+ 8. Rechte der Nutzer*innen 
+ Gemäss DSG stehen dir folgende Rechte zu: 
+ 
+ Recht auf Auskunft 
+ Recht auf Berichtigung 
+ Recht auf Löschung (sofern zulässig) 
+ Recht auf Einschränkung der Verarbeitung 
+ Recht auf Datenübertragbarkeit 
+ Recht auf Widerruf einer Einwilligung 
+ 
+ Anfragen bitte an: 📧 functiomed@hin.ch 
+ 9. Externe Links 
+ Die Website der functiomed AG kann Links zu externen Websites enthalten. 
+functiomed AG übernimmt keine Verantwortung für deren Inhalte oder Datenschutzpraktiken. 
+ 10. Änderungen der Datenschutzerklärung 
+ Die functiomed AG kann diese Datenschutzerklärung jederzeit anpassen. 
+Es gilt die jeweils aktuelle Version auf www.functiomed.ch . 
+ Bei wesentlichen Änderungen werden betroffene Personen angemessen informiert.
