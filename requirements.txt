@@ -27,7 +27,7 @@ faiss-cpu==1.8.0
 
 # # Embeddings — HuggingFace (free, multilingual, runs locally)
 # sentence-transformers==3.0.1
-# torch==2.4.1    
+# torch==2.4.1
           # CPU version — remove +cpu suffix if you have GPU
 
 # BM25 keyword search
@@ -37,6 +37,10 @@ rank-bm25==0.2.2
 langchain-groq==0.2.0
 groq==0.11.0
 
+# LiveKit
+livekit==0.19.0
+livekit-api==0.7.0
+
 # Utilities
 python-dotenv==1.0.1
 pydantic==2.9.2
@@ -45,4 +49,3 @@ aiofiles==24.1.0
 tqdm==4.66.5
 aiosqlite==0.20.0
 python-multipart
-
