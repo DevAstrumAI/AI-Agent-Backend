@@ -46,5 +46,3 @@ tqdm==4.66.5
 aiosqlite==0.20.0
 python-multipart
 
-# Optional: cross-encoder reranking (uncomment if you want it)
-# sentence-transformers already includes CrossEncoder

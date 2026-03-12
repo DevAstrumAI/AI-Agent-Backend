@@ -27,7 +27,7 @@ from llm.generator import ask, detect_language
 
 from api.bookings_router import router as bookings_router
 from api.clinic_router    import router as clinic_router      # ← NEW
-from database.models import init_db, seed_demo_data           # ← seed_demo_data NEW
+from database.models import init_db          # ← seed_demo_data NEW
 
 _pipeline_ready = False
 _pipeline_error = None
@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
         # ── 1. Database ───────────────────────────────────────
         print("\n🗄️  Initializing database...")
         await init_db()
-        await seed_demo_data()   # no-op if already seeded
+              # no-op if already seeded
 
         # ── 2. RAG pipeline ───────────────────────────────────
         print("\n📚 Loading documents from disk...")
@@ -97,7 +97,9 @@ app.add_middleware(
 )
 
 app.include_router(bookings_router)
-app.include_router(clinic_router)     # ← NEW: /clinic/services, /clinic/doctors, /clinic/slots
+app.include_router(clinic_router) 
+from api.livekit_router import router as livekit_router
+app.include_router(livekit_router)    # ← NEW: /clinic/services, /clinic/doctors, /clinic/slots
 
 try:
     from api.pdf_router import router as pdf_router

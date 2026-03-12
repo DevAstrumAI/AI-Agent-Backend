@@ -12,7 +12,7 @@ SQLite schema + full CRUD for:
 import aiosqlite
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 DB_PATH = os.getenv("DB_PATH", "data/functiomed.db")
@@ -83,82 +83,6 @@ async def init_db():
         """)
         await db.commit()
     print(f"✅ Database ready: {DB_PATH}")
-
-
-# ─────────────────────────────────────────────────────────────
-# Seed demo data
-# ─────────────────────────────────────────────────────────────
-
-async def seed_demo_data():
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA foreign_keys=ON")
-        cursor = await db.execute("SELECT COUNT(*) FROM services")
-        count  = (await cursor.fetchone())[0]
-        if count > 0:
-            print("ℹ️  Demo data already present, skipping seed.")
-            return
-
-        services = [
-            ("svc-1",  "Osteopathy",        "Manual therapy for musculoskeletal issues", 60),
-            ("svc-2",  "Manipulation",       "Joint manipulation therapy",                45),
-            ("svc-3",  "Examination",        "General medical examination",               30),
-            ("svc-4",  "Foot Treatment",     "Podiatry and foot care",                    45),
-            ("svc-5",  "Ankle Treatment",    "Ankle rehabilitation and therapy",          45),
-            ("svc-6",  "Joint Injections",   "Therapeutic joint injections",              30),
-            ("svc-7",  "Infiltration",       "Local anaesthetic infiltration therapy",    30),
-            ("svc-8",  "ACP",                "Autologous Conditioned Plasma therapy",     45),
-            ("svc-9",  "Dry Needling",       "Trigger point dry needling",                30),
-            ("svc-10", "IV Therapy",         "Intravenous nutrient therapy",              60),
-            ("svc-11", "Nutrient Infusions", "Personalised nutrient infusion treatments", 60),
-        ]
-        await db.executemany(
-            "INSERT OR IGNORE INTO services (id, name, description, duration_minutes) VALUES (?,?,?,?)",
-            services,
-        )
-
-        doctors = [
-            ("doc-1", "Dr. Anna Müller", "Dr.",  "Specialist in osteopathy and manipulation"),
-            ("doc-2", "Dr. Stefan Koch", "Dr.",  "Expert in IV therapy and nutrient infusions"),
-            ("doc-3", "Dr. Maria Weber", "Dr.",  "Podiatrist specialising in foot and ankle"),
-            ("doc-4", "Dr. Hans Becker", "Dr.",  "Sports medicine and joint injections"),
-            ("doc-5", "Lisa Schneider",  "MSc",  "Physiotherapist and dry needling specialist"),
-        ]
-        await db.executemany(
-            "INSERT OR IGNORE INTO doctors (id, full_name, title, bio) VALUES (?,?,?,?)",
-            doctors,
-        )
-
-        mappings = [
-            ("doc-1", "svc-1"), ("doc-1", "svc-2"), ("doc-1", "svc-3"),
-            ("doc-2", "svc-10"), ("doc-2", "svc-11"), ("doc-2", "svc-8"),
-            ("doc-3", "svc-4"), ("doc-3", "svc-5"), ("doc-3", "svc-3"),
-            ("doc-4", "svc-6"), ("doc-4", "svc-7"), ("doc-4", "svc-8"), ("doc-4", "svc-9"),
-            ("doc-5", "svc-9"), ("doc-5", "svc-2"), ("doc-5", "svc-1"),
-        ]
-        await db.executemany(
-            "INSERT OR IGNORE INTO doctor_services (doctor_id, service_id) VALUES (?,?)",
-            mappings,
-        )
-
-        slot_rows = []
-        times = ["09:00", "11:00", "14:00"]
-        base  = datetime.now().date()
-        doc_service_map = {
-            "doc-1": "svc-1", "doc-2": "svc-10",
-            "doc-3": "svc-4", "doc-4": "svc-6", "doc-5": "svc-9",
-        }
-        for day_offset in range(1, 8):
-            date_str = (base + timedelta(days=day_offset)).strftime("%Y-%m-%d")
-            for doc_id, svc_id in doc_service_map.items():
-                for t in times:
-                    slot_rows.append((str(uuid.uuid4()), doc_id, svc_id, date_str, t, 1))
-
-        await db.executemany(
-            "INSERT OR IGNORE INTO slots (id, doctor_id, service_id, slot_date, slot_time, available) VALUES (?,?,?,?,?,?)",
-            slot_rows,
-        )
-        await db.commit()
-        print(f"✅ Seeded: {len(services)} services, {len(doctors)} doctors, {len(slot_rows)} slots")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -456,17 +380,12 @@ async def get_all_bookings(status: str = None) -> list[dict]:
 
 
 async def get_booking_by_id(booking_id: int | str) -> dict | None:
-    """
-    Accepts integer ID (e.g. 1, 2, 3) OR confirmation number (e.g. FM-2026-AB12CD).
-    """
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        # Try integer ID first
         try:
             int_id = int(booking_id)
             cur = await db.execute("SELECT * FROM bookings WHERE id=?", (int_id,))
         except (ValueError, TypeError):
-            # Fall back to confirmation number lookup
             cur = await db.execute(
                 "SELECT * FROM bookings WHERE confirmation_number=?", (booking_id,)
             )
@@ -517,7 +436,6 @@ async def save_booking(
              slot_date, slot_time, language, session_summary),
         )
         await db.commit()
-        # last_insert_rowid() is guaranteed correct within same connection after commit
         row = await db.execute("SELECT last_insert_rowid()")
         result = await row.fetchone()
         new_id = result[0] if result else None
