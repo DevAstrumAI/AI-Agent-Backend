@@ -44,3 +44,6 @@ aiofiles==24.1.0
 tqdm==4.66.5
 aiosqlite==0.20.0
 python-multipart
+
+# NOTE: torch and sentence-transformers are installed in Dockerfile
+# BEFORE this file to force CPU-only builds (no CUDA/nvidia packages)
