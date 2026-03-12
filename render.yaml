@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: functiomed-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    region: frankfurt
+    healthCheckPath: /
+    envVars:
+      - key: DB_PATH
+        value: /data/functiomed.db
+      - key: FAISS_INDEX_DIR
+        value: /data/faiss_index
+      - key: CLEAN_TEXT_DIR
+        value: /data/clean_text
+      - key: RAW_HTML_DIR
+        value: /data/raw_html
+      - key: PDF_DIR
+        value: /data/pdfs
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+    disk:
+      name: functiomed-data
+      mountPath: /data
+      sizeGB: 10

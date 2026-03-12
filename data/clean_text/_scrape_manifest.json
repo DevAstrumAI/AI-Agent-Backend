@@ -1,8 +1,7 @@
 {
-  "scraped_at": "2026-03-09T14:34:13.237030",
-  "base_url": "https://www.functiomed.ch/",
-  "total_pages": 36,
-  "total_failed": 1,
+  "scraped_at": "2026-03-12T10:28:23.979778",
+  "total_pages": 71,
+  "total_failed": 2,
   "pages": [
     {
       "url": "https://www.functiomed.ch/",
@@ -10,19 +9,24 @@
       "words": 1139
     },
     {
-      "url": "https://www.functiomed.ch/datenschutz",
-      "title": "Datenschutz - functiomed AG",
-      "words": 664
+      "url": "https://www.functiomed.ch/en",
+      "title": "functiomed AG | Zentrum für funktionelle Medizin - functiomed AG",
+      "words": 1139
     },
     {
-      "url": "https://www.functiomed.ch/angebot",
-      "title": "Angebot - functiomed AG",
-      "words": 695
+      "url": "https://www.functiomed.ch/abteilung/geschaeftsleitung",
+      "title": "Team - functiomed AG",
+      "words": 594
     },
     {
-      "url": "https://www.functiomed.ch/angebot/osteophatie-etiopathie",
-      "title": "OSTEOPATHIE - functiomed AG",
-      "words": 161
+      "url": "https://www.functiomed.ch/abteilung/empfang",
+      "title": "Team - functiomed AG",
+      "words": 594
+    },
+    {
+      "url": "https://www.functiomed.ch/abteilung/physiotherapie",
+      "title": "Team - functiomed AG",
+      "words": 594
     },
     {
       "url": "https://www.functiomed.ch/angebot/physiotherapie",
@@ -30,29 +34,9 @@
       "words": 337
     },
     {
-      "url": "https://www.functiomed.ch/angebot/orthopaedie-traumatologie-sportmedizin",
-      "title": "Orthopädie, Traumatologie & Sportmedizin - functiomed AG",
-      "words": 678
-    },
-    {
-      "url": "https://www.functiomed.ch/angebot/rheumatologie-innere-medizin",
-      "title": "RHEUMATOLOGIE | INNERE MEDIZIN - functiomed AG",
-      "words": 680
-    },
-    {
-      "url": "https://www.functiomed.ch/angebot/ergotherapie",
-      "title": "ERGOTHERAPIE - functiomed AG",
-      "words": 63
-    },
-    {
-      "url": "https://www.functiomed.ch/angebot/integrative-medizin",
-      "title": "Integrative Medizin - functiomed AG",
-      "words": 248
-    },
-    {
-      "url": "https://www.functiomed.ch/angebot/massage",
-      "title": "MED. MASSAGEN - functiomed AG",
-      "words": 369
+      "url": "https://www.functiomed.ch/en/angebot/physiotherapie-kinderphysiotherapie",
+      "title": "Kinderphysiotherapie - functiomed AG",
+      "words": 84
     },
     {
       "url": "https://www.functiomed.ch/angebot/mental-coaching",
@@ -60,32 +44,72 @@
       "words": 75
     },
     {
+      "url": "https://www.functiomed.ch/en/angebot/mentaltraining",
+      "title": "MENTAL COACHING - functiomed AG",
+      "words": 75
+    },
+    {
+      "url": "https://www.functiomed.ch/angebot/massage",
+      "title": "MED. MASSAGEN - functiomed AG",
+      "words": 369
+    },
+    {
+      "url": "https://www.functiomed.ch/en/angebot/massage",
+      "title": "MED. MASSAGEN - functiomed AG",
+      "words": 369
+    },
+    {
+      "url": "https://www.functiomed.ch/angebot/ergotherapie",
+      "title": "ERGOTHERAPIE - functiomed AG",
+      "words": 301
+    },
+    {
+      "url": "https://www.functiomed.ch/angebot/orthopaedie-und-traumatologie",
+      "title": "Orthopädie, Traumatologie & Sportmedizin - functiomed AG",
+      "words": 678
+    },
+    {
+      "url": "https://www.functiomed.ch/en/angebot/orthopaedie-und-traumatologie_sportmedizin",
+      "title": "Orthopädie, Traumatologie & Sportmedizin - functiomed AG",
+      "words": 678
+    },
+    {
       "url": "https://www.functiomed.ch/angebot/stammzellen",
       "title": "STAMMZELLEN - functiomed AG",
       "words": 80
     },
     {
-      "url": "https://www.functiomed.ch/angebot/functiotraining",
-      "title": "FUNCTIOTRAINING - functiomed AG",
-      "words": 180
+      "url": "https://www.functiomed.ch/angebot/integrative_medizin",
+      "title": "Integrative Medizin - functiomed AG",
+      "words": 248
     },
     {
-      "url": "https://www.functiomed.ch/kooperationen",
+      "url": "https://www.functiomed.ch/en/angebot/integrative_medizin",
+      "title": "Integrative Medizin - functiomed AG",
+      "words": 248
+    },
+    {
+      "url": "https://www.functiomed.ch/angebot/infusionstherapie",
+      "title": "Infusionstherapie - functiomed AG",
+      "words": 83
+    },
+    {
+      "url": "https://www.functiomed.ch/angebot/erspe-institut-ernaehrungsdiagnostik",
+      "title": "erpse Institut AG für Ernährungsdiagnostik - functiomed AG",
+      "words": 149
+    },
+    {
+      "url": "https://www.functiomed.ch/en/angebot/ernaehrungsberatung",
       "title": "KOOPERATIONEN - functiomed AG",
       "words": 404
     },
     {
-      "url": "https://www.functiomed.ch/angebot/akupunktur",
-      "title": "Akupunktur – 5 Elemente │Marian Leuthold - functiomed AG",
-      "words": 142
-    },
-    {
-      "url": "https://www.functiomed.ch/angebot/homoeopathie",
-      "title": "Homöopathie – Praxis Globuli │Walti Linke - functiomed AG",
-      "words": 74
-    },
-    {
       "url": "https://www.functiomed.ch/angebot/numo",
+      "title": "Numo Orthopedic System AG - functiomed AG",
+      "words": 73
+    },
+    {
+      "url": "https://www.functiomed.ch/en/angebot/numo",
       "title": "Numo Orthopedic System AG - functiomed AG",
       "words": 73
     },
@@ -95,24 +119,74 @@
       "words": 102
     },
     {
-      "url": "https://www.functiomed.ch/angebot/erspe-institut-ernaehrungsdiagnostik",
-      "title": "erpse Institut AG für Ernährungsdiagnostik - functiomed AG",
-      "words": 149
+      "url": "https://www.functiomed.ch/angebot/homoeopathie",
+      "title": "Homöopathie – Praxis Globuli │Walti Linke - functiomed AG",
+      "words": 74
     },
     {
-      "url": "https://www.functiomed.ch/team",
-      "title": "Team - functiomed AG",
-      "words": 594
+      "url": "https://www.functiomed.ch/en/angebot/homoeopathie",
+      "title": "KOOPERATIONEN - functiomed AG",
+      "words": 404
     },
     {
-      "url": "https://www.functiomed.ch/unsere-functiosportler",
-      "title": "Unsere functiosportler - functiomed AG",
-      "words": 126
+      "url": "https://www.functiomed.ch/angebot/akupunktur",
+      "title": "Akupunktur – 5 Elemente │Marian Leuthold - functiomed AG",
+      "words": 142
     },
     {
-      "url": "https://www.functiomed.ch/angebot/unser-engagement-functiosport",
-      "title": "Unser Engagement - functiosport - functiomed AG",
-      "words": 342
+      "url": "https://www.functiomed.ch/en/angebot/akupunktur",
+      "title": "Akupunktur – 5 Elemente │Marian Leuthold - functiomed AG",
+      "words": 142
+    },
+    {
+      "url": "https://www.functiomed.ch/angebot/osteophatie-etiopathie",
+      "title": "OSTEOPATHIE - functiomed AG",
+      "words": 161
+    },
+    {
+      "url": "https://www.functiomed.ch/en/angebot/osteophatie-etiopathie",
+      "title": "OSTEOPATHIE - functiomed AG",
+      "words": 161
+    },
+    {
+      "url": "https://www.functiomed.ch/angebot/kinderosteopathie",
+      "title": "Kinderosteopathie in Zürich - functiomed AG",
+      "words": 41
+    },
+    {
+      "url": "https://www.functiomed.ch/en/angebot/kinderosteopathie",
+      "title": "Kinderosteopathie in Zürich - functiomed AG",
+      "words": 41
+    },
+    {
+      "url": "https://www.functiomed.ch/angebot/functiotraining",
+      "title": "FUNCTIOTRAINING - functiomed AG",
+      "words": 180
+    },
+    {
+      "url": "https://www.functiomed.ch/en/angebot/functiotraining",
+      "title": "FUNCTIOTRAINING - functiomed AG",
+      "words": 180
+    },
+    {
+      "url": "https://www.functiomed.ch/angebot/functiokurse",
+      "title": "FUNCTIOTRAINING - functiomed AG",
+      "words": 180
+    },
+    {
+      "url": "https://www.functiomed.ch/en/angebot/functiokurse",
+      "title": "Seite wurde nicht gefunden. - functiomed AG",
+      "words": 291
+    },
+    {
+      "url": "https://www.functiomed.ch/news",
+      "title": "functiomed AG | Zentrum für funktionelle Medizin - functiomed AG",
+      "words": 1139
+    },
+    {
+      "url": "https://www.functiomed.ch/news/spezielle-oeffnungszeiten",
+      "title": "Kontakt & Anfahrt - functiomed AG",
+      "words": 92
     },
     {
       "url": "https://www.functiomed.ch/tarife",
@@ -120,19 +194,74 @@
       "words": 688
     },
     {
-      "url": "https://www.functiomed.ch/angebot/qualitaet",
-      "title": "Qualität - functiomed AG",
-      "words": 78
+      "url": "https://www.functiomed.ch/unsere-functiosportler",
+      "title": "Unsere functiosportler - functiomed AG",
+      "words": 126
     },
     {
-      "url": "https://www.functiomed.ch/angebot/karriere",
-      "title": "Karriere - functiomed AG",
-      "words": 180
+      "url": "https://www.functiomed.ch/news/bilderausstellung-von-leoarta-rushiti",
+      "title": "functiomed AG | Zentrum für funktionelle Medizin - functiomed AG",
+      "words": 1139
     },
     {
-      "url": "https://www.functiomed.ch/angebot/community",
-      "title": "Community - functiomed AG",
-      "words": 109
+      "url": "https://www.functiomed.ch/ausstellungen/bilderausstellung-von-manu-ueltschi",
+      "title": "functiomed AG | Zentrum für funktionelle Medizin - functiomed AG",
+      "words": 1139
+    },
+    {
+      "url": "https://www.functiomed.ch/gesundheitstipps/uebung-des-monats-juni",
+      "title": "Team - functiomed AG",
+      "words": 594
+    },
+    {
+      "url": "https://www.functiomed.ch/gesundheitstipps/uebung-des-monats-juli",
+      "title": "Team - functiomed AG",
+      "words": 594
+    },
+    {
+      "url": "https://www.functiomed.ch/gesundheitstipps/uebung-des-monats-mai",
+      "title": "Team - functiomed AG",
+      "words": 594
+    },
+    {
+      "url": "https://www.functiomed.ch/gesundheitstipps/uebung-des-monats-april",
+      "title": "Team - functiomed AG",
+      "words": 594
+    },
+    {
+      "url": "https://www.functiomed.ch/gesundheitstipps/uebung-des-monats-maerz",
+      "title": "Seite wurde nicht gefunden. - functiomed AG",
+      "words": 291
+    },
+    {
+      "url": "https://www.functiomed.ch/gesundheitstipps/uebung-des-monats-februar",
+      "title": "Seite wurde nicht gefunden. - functiomed AG",
+      "words": 291
+    },
+    {
+      "url": "https://www.functiomed.ch/gesundheitstipps/uebung-des-monats-januar",
+      "title": "Team - functiomed AG",
+      "words": 594
+    },
+    {
+      "url": "https://www.functiomed.ch/ausstellungen/bilderausstellung-von-claudia-kircher",
+      "title": "functiomed AG | Zentrum für funktionelle Medizin - functiomed AG",
+      "words": 1139
+    },
+    {
+      "url": "https://www.functiomed.ch/shop",
+      "title": "functiomed AG | Zentrum für funktionelle Medizin - functiomed AG",
+      "words": 1139
+    },
+    {
+      "url": "https://www.functiomed.ch/angebot/rheumatologie-innere-medizin",
+      "title": "RHEUMATOLOGIE | INNERE MEDIZIN - functiomed AG",
+      "words": 680
+    },
+    {
+      "url": "https://www.functiomed.ch/angebot/colon-hydro-therapie",
+      "title": "Colon Hydro Therapie - functiomed AG",
+      "words": 235
     },
     {
       "url": "https://www.functiomed.ch/kontakt",
@@ -140,55 +269,104 @@
       "words": 92
     },
     {
+      "url": "https://www.functiomed.ch/events/leichtathletik-em-rom-2024",
+      "title": "Seite wurde nicht gefunden. - functiomed AG",
+      "words": 291
+    },
+    {
       "url": "https://www.functiomed.ch/notfall",
       "title": "NOTFALL - functiomed AG",
       "words": 33
     },
     {
-      "url": "https://www.functiomed.ch/%20+41%20(0)44%20401%2015%2015",
+      "url": "https://www.functiomed.ch/news/world-athletics-relays-bahamas",
       "title": "Seite wurde nicht gefunden. - functiomed AG",
-      "words": 290
+      "words": 291
     },
     {
-      "url": "https://www.functiomed.ch/umgang-mit-patientendaten",
-      "title": "Umgang mit Patientendaten - functiomed AG",
-      "words": 651
+      "url": "https://www.functiomed.ch/news/interview-mit-martin-spring",
+      "title": "Prof. Martin Spring - functiomed AG",
+      "words": 50
     },
     {
-      "url": "https://www.functiomed.ch/agb",
-      "title": "AGB - functiomed AG",
-      "words": 484
+      "url": "https://www.functiomed.ch/ausstellungen/bilderausstellung-von-milijana-tanovic",
+      "title": "Seite wurde nicht gefunden. - functiomed AG",
+      "words": 291
     },
     {
-      "url": "http://www.functiomed.ch/",
+      "url": "https://www.functiomed.ch/angebot/kiefertherapie",
+      "title": "OSTEOPATHIE - functiomed AG",
+      "words": 161
+    },
+    {
+      "url": "https://www.functiomed.ch/ausstellungen/bilderausstellung-von-annette-k",
       "title": "functiomed AG | Zentrum für funktionelle Medizin - functiomed AG",
       "words": 1139
     },
     {
-      "url": "https://www.functiomed.ch/angebot/sportphysiotherapie",
-      "title": "Sportphysiotherapie - functiomed AG",
-      "words": 39
+      "url": "https://www.functiomed.ch/datenschutz",
+      "title": "Datenschutz - functiomed AG",
+      "words": 664
     },
     {
-      "url": "https://www.functiomed.ch/angebot/physiotherapie-basic",
-      "title": "Physiotherapie Basic - functiomed AG",
-      "words": 218
-    },
-    {
-      "url": "https://www.functiomed.ch/person/marina-schuermann",
-      "title": "Marina Schürmann - functiomed AG",
-      "words": 22
-    },
-    {
-      "url": "https://www.functiomed.ch/kontakt/%20+41%20(0)44%20401%2015%2015",
+      "url": "https://www.functiomed.ch/ueber-uns",
       "title": "Seite wurde nicht gefunden. - functiomed AG",
-      "words": 290
+      "words": 291
+    },
+    {
+      "url": "https://www.functiomed.ch/privacy-policy",
+      "title": "Seite wurde nicht gefunden. - functiomed AG",
+      "words": 291
+    },
+    {
+      "url": "https://www.functiomed.ch/angebot",
+      "title": "Angebot - functiomed AG",
+      "words": 703
+    },
+    {
+      "url": "https://www.functiomed.ch/videos/trainingsvideo-die-goldenen-uebungen",
+      "title": "Seite wurde nicht gefunden. - functiomed AG",
+      "words": 291
+    },
+    {
+      "url": "https://www.functiomed.ch/videos/vortrag-von-tamara-meier-ernaehrungsberatung",
+      "title": "functiomed AG | Zentrum für funktionelle Medizin - functiomed AG",
+      "words": 1139
+    },
+    {
+      "url": "https://www.functiomed.ch/videos/vortrag-von-marian-leuthold-naturheilpraktikerin",
+      "title": "functiomed AG | Zentrum für funktionelle Medizin - functiomed AG",
+      "words": 1139
+    },
+    {
+      "url": "https://www.functiomed.ch/videos/ein-schmerzfreier-ruecken",
+      "title": "functiomed AG | Zentrum für funktionelle Medizin - functiomed AG",
+      "words": 1139
+    },
+    {
+      "url": "https://www.functiomed.ch/videos/trainingsvideo-rueckenturnen",
+      "title": "Team - functiomed AG",
+      "words": 594
+    },
+    {
+      "url": "https://www.functiomed.ch/videos/yoga",
+      "title": "KOOPERATIONEN - functiomed AG",
+      "words": 404
+    },
+    {
+      "url": "https://www.functiomed.ch/angebot/unser-engagement-functiosport",
+      "title": "Unser Engagement - functiosport - functiomed AG",
+      "words": 342
     }
   ],
   "failed": [
     {
       "url": "https://www.functiomed.ch/termin-buchen",
       "error": "Page.goto: Timeout 30000ms exceeded.\nCall log:\nnavigating to \"https://www.functiomed.ch/termin-buchen\", waiting until \"networkidle\"\n"
+    },
+    {
+      "url": "https://www.functiomed.ch/en/book-appointment",
+      "error": "Page.goto: Timeout 30000ms exceeded.\nCall log:\nnavigating to \"https://www.functiomed.ch/en/book-appointment\", waiting until \"networkidle\"\n"
     }
   ]
 }

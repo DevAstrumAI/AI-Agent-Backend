@@ -1,10 +1,5 @@
 """
-RAG Backend — api/app.py  (updated lifespan + clinic_router)
-==============================================================
-Changes from previous version:
-  ✅ Mounts /clinic router  (services, doctors, slots from DB)
-  ✅ Calls seed_demo_data() on startup
-  ✅ All other endpoints unchanged
+RAG Backend — api/app.py
 """
 
 import asyncio
@@ -26,8 +21,8 @@ from retrieval.retriever import HybridRetriever
 from llm.generator import ask, detect_language
 
 from api.bookings_router import router as bookings_router
-from api.clinic_router    import router as clinic_router      # ← NEW
-from database.models import init_db          # ← seed_demo_data NEW
+from api.clinic_router    import router as clinic_router
+from database.models      import init_db
 
 _pipeline_ready = False
 _pipeline_error = None
@@ -48,12 +43,9 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_event_loop()
 
     try:
-        # ── 1. Database ───────────────────────────────────────
         print("\n🗄️  Initializing database...")
         await init_db()
-              # no-op if already seeded
 
-        # ── 2. RAG pipeline ───────────────────────────────────
         print("\n📚 Loading documents from disk...")
         docs    = await loop.run_in_executor(None, load_documents_from_disk)
         _chunks = await loop.run_in_executor(None, chunk_documents, docs)
@@ -97,9 +89,10 @@ app.add_middleware(
 )
 
 app.include_router(bookings_router)
-app.include_router(clinic_router) 
+app.include_router(clinic_router)
+
 from api.livekit_router import router as livekit_router
-app.include_router(livekit_router)    # ← NEW: /clinic/services, /clinic/doctors, /clinic/slots
+app.include_router(livekit_router)
 
 try:
     from api.pdf_router import router as pdf_router
@@ -136,7 +129,7 @@ def require_pipeline():
         raise HTTPException(status_code=503, detail=_pipeline_error or "Pipeline loading")
 
 
-# ── Endpoints ─────────────────────────────────────────────────
+# ── Core endpoints ────────────────────────────────────────────
 
 @app.get("/")
 def root():
@@ -196,6 +189,68 @@ def retrieve_chunks(req: RetrieveRequest):
             for i, (doc, score) in enumerate(results)
         ],
     }
+
+
+# ── Scrape endpoint ───────────────────────────────────────────
+
+_scrape_status = {"running": False, "last_run": None, "scraped": 0, "failed": 0, "error": None}
+
+
+def _run_scrape(urls: list[str] | None, crawl: bool):
+    """Runs in a background thread via BackgroundTasks."""
+    import asyncio as _asyncio
+    from scraper.scraper import WebScraper
+
+    _scrape_status["running"] = True
+    _scrape_status["error"]   = None
+
+    try:
+        scraper = WebScraper(urls=urls, dry_run=False, crawl=crawl)
+        result  = _asyncio.run(scraper.scrape_all())
+        _scrape_status["scraped"]  = len(scraper.scraped)
+        _scrape_status["failed"]   = len(scraper.failed)
+        _scrape_status["last_run"] = __import__("datetime").datetime.now().isoformat()
+    except Exception as e:
+        _scrape_status["error"] = str(e)
+    finally:
+        _scrape_status["running"] = False
+
+
+@app.post("/scrape")
+def trigger_scrape(
+    background_tasks: BackgroundTasks,
+    crawl: bool = False,
+    urls: list[str] | None = None,
+):
+    """
+    Trigger a web scrape in the background.
+
+    - Uses the predefined URL list by default (all functiomed.ch pages)
+    - Pass `urls` body to scrape specific pages instead
+    - Pass `crawl=true` to also discover and follow links from scraped pages
+    - Poll GET /scrape/status to track progress
+
+    After scraping completes, call POST /pdfs/ingest to rebuild the RAG index.
+    """
+    if _scrape_status["running"]:
+        raise HTTPException(status_code=409, detail="A scrape is already running")
+
+    background_tasks.add_task(_run_scrape, urls, crawl)
+
+    url_count = len(urls) if urls else "all predefined (83 URLs)"
+    return {
+        "message":   "Scrape started in background",
+        "urls":      url_count,
+        "crawl":     crawl,
+        "poll":      "GET /scrape/status",
+        "next_step": "After scraping, call POST /pdfs/ingest?rebuild_index=true",
+    }
+
+
+@app.get("/scrape/status")
+def scrape_status():
+    """Poll scrape progress."""
+    return _scrape_status
 
 
 if __name__ == "__main__":
