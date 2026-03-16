@@ -7,10 +7,6 @@ PostgreSQL schema + full CRUD for:
   - doctor_services  (many-to-many)
   - slots
   - bookings
-
-Uses asyncpg via the DATABASE_URL environment variable.
-Set DATABASE_URL in Render dashboard under Environment Variables:
-  postgresql://user:password@host:5432/dbname
 """
 
 import asyncpg
@@ -40,67 +36,66 @@ async def init_db():
     if not DATABASE_URL:
         raise EnvironmentError("DATABASE_URL not set. Add it to your environment.")
 
-    # Render provides postgres:// but asyncpg needs postgresql://
     url = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
     _pool = await asyncpg.create_pool(url, min_size=2, max_size=10)
 
     async with _pool.acquire() as conn:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS services (
-                id               TEXT PRIMARY KEY,
-                name             TEXT NOT NULL UNIQUE,
-                description      TEXT DEFAULT '',
-                duration_minutes INTEGER DEFAULT 60,
-                active           INTEGER DEFAULT 1
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS doctors (
-                id        TEXT PRIMARY KEY,
-                full_name TEXT NOT NULL,
-                title     TEXT DEFAULT '',
-                bio       TEXT DEFAULT '',
-                active    INTEGER DEFAULT 1
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS doctor_services (
-                doctor_id  TEXT NOT NULL REFERENCES doctors(id) ON DELETE CASCADE,
-                service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-                PRIMARY KEY (doctor_id, service_id)
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS slots (
-                id         TEXT PRIMARY KEY,
-                doctor_id  TEXT NOT NULL REFERENCES doctors(id) ON DELETE CASCADE,
-                service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-                slot_date  TEXT NOT NULL,
-                slot_time  TEXT NOT NULL,
-                available  INTEGER DEFAULT 1
-            )
-        """)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS bookings (
-                id                  SERIAL PRIMARY KEY,
-                confirmation_number TEXT NOT NULL UNIQUE,
-                slot_id             TEXT REFERENCES slots(id),
-                service_id          TEXT REFERENCES services(id),
-                doctor_id           TEXT REFERENCES doctors(id),
-                service_name        TEXT NOT NULL,
-                doctor_name         TEXT NOT NULL,
-                patient_name        TEXT NOT NULL,
-                slot_date           TEXT,
-                slot_time           TEXT,
-                language            TEXT DEFAULT 'en',
-                status              TEXT DEFAULT 'confirmed',
-                booked_at           TEXT DEFAULT (to_char(NOW(), 'YYYY-MM-DD HH24:MI:SS')),
-                session_summary     TEXT
-            )
-        """)
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS services ("
+            "  id               TEXT PRIMARY KEY,"
+            "  name             TEXT NOT NULL UNIQUE,"
+            "  description      TEXT DEFAULT '',"
+            "  duration_minutes INTEGER DEFAULT 60,"
+            "  active           INTEGER DEFAULT 1"
+            ")"
+        )
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS doctors ("
+            "  id        TEXT PRIMARY KEY,"
+            "  full_name TEXT NOT NULL,"
+            "  title     TEXT DEFAULT '',"
+            "  bio       TEXT DEFAULT '',"
+            "  active    INTEGER DEFAULT 1"
+            ")"
+        )
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS doctor_services ("
+            "  doctor_id  TEXT NOT NULL REFERENCES doctors(id) ON DELETE CASCADE,"
+            "  service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,"
+            "  PRIMARY KEY (doctor_id, service_id)"
+            ")"
+        )
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS slots ("
+            "  id         TEXT PRIMARY KEY,"
+            "  doctor_id  TEXT NOT NULL REFERENCES doctors(id) ON DELETE CASCADE,"
+            "  service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,"
+            "  slot_date  TEXT NOT NULL,"
+            "  slot_time  TEXT NOT NULL,"
+            "  available  INTEGER DEFAULT 1"
+            ")"
+        )
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS bookings ("
+            "  id                  SERIAL PRIMARY KEY,"
+            "  confirmation_number TEXT NOT NULL UNIQUE,"
+            "  slot_id             TEXT REFERENCES slots(id),"
+            "  service_id          TEXT REFERENCES services(id),"
+            "  doctor_id           TEXT REFERENCES doctors(id),"
+            "  service_name        TEXT NOT NULL,"
+            "  doctor_name         TEXT NOT NULL,"
+            "  patient_name        TEXT NOT NULL,"
+            "  slot_date           TEXT,"
+            "  slot_time           TEXT,"
+            "  language            TEXT DEFAULT 'en',"
+            "  status              TEXT DEFAULT 'confirmed',"
+            "  booked_at           TEXT DEFAULT (to_char(NOW(), 'YYYY-MM-DD HH24:MI:SS')),"
+            "  session_summary     TEXT"
+            ")"
+        )
 
-    print(f"✅ PostgreSQL database ready")
+    print("✅ PostgreSQL database ready")
 
 
 async def close_db():
@@ -248,12 +243,10 @@ async def get_services_for_doctor(doctor_id: str) -> list[dict]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            """
-            SELECT s.* FROM services s
-            JOIN doctor_services ds ON ds.service_id = s.id
-            WHERE ds.doctor_id = $1
-            ORDER BY s.name
-            """,
+            "SELECT s.* FROM services s"
+            " JOIN doctor_services ds ON ds.service_id = s.id"
+            " WHERE ds.doctor_id = $1"
+            " ORDER BY s.name",
             doctor_id,
         )
         return [dict(r) for r in rows]
@@ -263,7 +256,8 @@ async def assign_service_to_doctor(doctor_id: str, service_id: str) -> bool:
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "INSERT INTO doctor_services (doctor_id, service_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+            "INSERT INTO doctor_services (doctor_id, service_id) VALUES ($1,$2)"
+            " ON CONFLICT DO NOTHING",
             doctor_id, service_id,
         )
     return True
@@ -283,14 +277,12 @@ async def get_doctors_for_service_db(service_name: str) -> list[dict]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            """
-            SELECT d.id, d.full_name, d.title, d.bio
-            FROM doctors d
-            JOIN doctor_services ds ON ds.doctor_id = d.id
-            JOIN services s ON s.id = ds.service_id
-            WHERE LOWER(s.name) = LOWER($1) AND d.active=1 AND s.active=1
-            ORDER BY d.full_name
-            """,
+            "SELECT d.id, d.full_name, d.title, d.bio"
+            " FROM doctors d"
+            " JOIN doctor_services ds ON ds.doctor_id = d.id"
+            " JOIN services s ON s.id = ds.service_id"
+            " WHERE LOWER(s.name) = LOWER($1) AND d.active=1 AND s.active=1"
+            " ORDER BY d.full_name",
             service_name,
         )
         return [dict(r) for r in rows]
@@ -321,14 +313,12 @@ async def get_all_slots(
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            f"""
-            SELECT sl.*, d.full_name AS doctor_name, s.name AS service_name
-            FROM slots sl
-            JOIN doctors  d ON d.id = sl.doctor_id
-            JOIN services s ON s.id = sl.service_id
-            {where}
-            ORDER BY sl.slot_date, sl.slot_time
-            """,
+            f"SELECT sl.*, d.full_name AS doctor_name, s.name AS service_name"
+            f" FROM slots sl"
+            f" JOIN doctors d ON d.id = sl.doctor_id"
+            f" JOIN services s ON s.id = sl.service_id"
+            f" {where}"
+            f" ORDER BY sl.slot_date, sl.slot_time",
             *params,
         )
         return [dict(r) for r in rows]
@@ -346,7 +336,8 @@ async def create_slot(doctor_id: str, service_id: str, slot_date: str, slot_time
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "INSERT INTO slots (id, doctor_id, service_id, slot_date, slot_time) VALUES ($1,$2,$3,$4,$5)",
+            "INSERT INTO slots (id, doctor_id, service_id, slot_date, slot_time)"
+            " VALUES ($1,$2,$3,$4,$5)",
             sid, doctor_id, service_id, slot_date, slot_time,
         )
     return await get_slot_by_id(sid)
@@ -387,19 +378,17 @@ async def get_available_slots(service_name: str, doctor_name: str, limit: int = 
     pool  = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            """
-            SELECT sl.id, sl.slot_date, sl.slot_time,
-                   d.full_name AS doctor_name, s.name AS service_name, s.duration_minutes
-            FROM slots sl
-            JOIN doctors  d ON d.id = sl.doctor_id
-            JOIN services s ON s.id = sl.service_id
-            WHERE LOWER(d.full_name) = LOWER($1)
-              AND LOWER(s.name)      = LOWER($2)
-              AND sl.available       = 1
-              AND sl.slot_date       >= $3
-            ORDER BY sl.slot_date, sl.slot_time
-            LIMIT $4
-            """,
+            "SELECT sl.id, sl.slot_date, sl.slot_time,"
+            "       d.full_name AS doctor_name, s.name AS service_name, s.duration_minutes"
+            " FROM slots sl"
+            " JOIN doctors d ON d.id = sl.doctor_id"
+            " JOIN services s ON s.id = sl.service_id"
+            " WHERE LOWER(d.full_name) = LOWER($1)"
+            "   AND LOWER(s.name)      = LOWER($2)"
+            "   AND sl.available       = 1"
+            "   AND sl.slot_date       >= $3"
+            " ORDER BY sl.slot_date, sl.slot_time"
+            " LIMIT $4",
             doctor_name, service_name, today, limit,
         )
         return [dict(r) for r in rows]
@@ -465,14 +454,12 @@ async def save_booking(
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            """
-            INSERT INTO bookings
-              (confirmation_number, slot_id, service_id, doctor_id,
-               service_name, doctor_name, patient_name,
-               slot_date, slot_time, language, session_summary)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-            RETURNING id
-            """,
+            "INSERT INTO bookings"
+            "  (confirmation_number, slot_id, service_id, doctor_id,"
+            "   service_name, doctor_name, patient_name,"
+            "   slot_date, slot_time, language, session_summary)"
+            " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+            " RETURNING id",
             confirmation, slot_id, service_id, doctor_id,
             service_name, doctor_name, patient_name,
             slot_date, slot_time, language, session_summary,
