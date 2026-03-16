@@ -52,11 +52,12 @@ async def init_db():
         )
         await conn.execute(
             "CREATE TABLE IF NOT EXISTS doctors ("
-            "  id        TEXT PRIMARY KEY,"
-            "  full_name TEXT NOT NULL,"
-            "  title     TEXT DEFAULT '',"
-            "  bio       TEXT DEFAULT '',"
-            "  active    INTEGER DEFAULT 1"
+            "  id         TEXT PRIMARY KEY,"
+            "  full_name  TEXT NOT NULL,"
+            "  title      TEXT DEFAULT '',"
+            "  department TEXT DEFAULT '',"
+            "  bio        TEXT DEFAULT '',"
+            "  active     INTEGER DEFAULT 1"
             ")"
         )
         await conn.execute(
@@ -93,6 +94,11 @@ async def init_db():
             "  booked_at           TEXT DEFAULT (to_char(NOW(), 'YYYY-MM-DD HH24:MI:SS')),"
             "  session_summary     TEXT"
             ")"
+        )
+
+        # Migration: add department column if it doesn't exist yet
+        await conn.execute(
+            "ALTER TABLE doctors ADD COLUMN IF NOT EXISTS department TEXT DEFAULT ''"
         )
 
     print("✅ PostgreSQL database ready")
@@ -204,19 +210,24 @@ async def get_doctor_by_name(name: str) -> dict | None:
         return dict(row) if row else None
 
 
-async def create_doctor(full_name: str, title: str = "", bio: str = "") -> dict:
+async def create_doctor(
+    full_name:  str,
+    title:      str = "",
+    department: str = "",
+    bio:        str = "",
+) -> dict:
     did  = str(uuid.uuid4())
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "INSERT INTO doctors (id, full_name, title, bio) VALUES ($1,$2,$3,$4)",
-            did, full_name, title, bio,
+            "INSERT INTO doctors (id, full_name, title, department, bio) VALUES ($1,$2,$3,$4,$5)",
+            did, full_name, title, department, bio,
         )
     return await get_doctor_by_id(did)
 
 
 async def update_doctor(doctor_id: str, **fields) -> dict | None:
-    allowed = {"full_name", "title", "bio", "active"}
+    allowed = {"full_name", "title", "department", "bio", "active"}
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if not updates:
         return await get_doctor_by_id(doctor_id)
@@ -277,13 +288,69 @@ async def get_doctors_for_service_db(service_name: str) -> list[dict]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT d.id, d.full_name, d.title, d.bio"
+            "SELECT d.id, d.full_name, d.title, d.department, d.bio"
             " FROM doctors d"
             " JOIN doctor_services ds ON ds.doctor_id = d.id"
             " JOIN services s ON s.id = ds.service_id"
             " WHERE LOWER(s.name) = LOWER($1) AND d.active=1 AND s.active=1"
             " ORDER BY d.full_name",
             service_name,
+        )
+        return [dict(r) for r in rows]
+
+
+async def get_doctors_filtered(
+    search:     str | None = None,
+    department: str | None = None,
+    service_id: str | None = None,
+    active:     int | None = None,
+) -> list[dict]:
+    """
+    Filter doctors by name search, department, assigned service, and active status.
+    All filters are optional and combinable.
+    """
+    conditions = []
+    params     = []
+    i          = 1
+
+    # Name search (case-insensitive partial match)
+    if search:
+        conditions.append(f"LOWER(d.full_name) LIKE LOWER(${i})")
+        params.append(f"%{search}%")
+        i += 1
+
+    # Department exact match (case-insensitive)
+    if department:
+        conditions.append(f"LOWER(d.department) = LOWER(${i})")
+        params.append(department)
+        i += 1
+
+    # Active status
+    if active is not None:
+        conditions.append(f"d.active = ${i}")
+        params.append(active)
+        i += 1
+
+    # Service filter using EXISTS subquery
+    if service_id:
+        conditions.append(
+            f"EXISTS ("
+            f"  SELECT 1 FROM doctor_services ds"
+            f"  WHERE ds.doctor_id = d.id AND ds.service_id = ${i}"
+            f")"
+        )
+        params.append(service_id)
+        i += 1
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            f"SELECT * FROM doctors d"
+            f" {where}"
+            f" ORDER BY d.full_name",
+            *params,
         )
         return [dict(r) for r in rows]
 

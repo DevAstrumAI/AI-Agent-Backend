@@ -2,35 +2,6 @@
 RAG Backend — api/clinic_router.py
 =====================================
 Full CRUD for services, doctors, and slots.
-
-SERVICES
-  GET    /clinic/services              — list all services
-  POST   /clinic/services              — create service
-  GET    /clinic/services/{id}         — get service by ID
-  PATCH  /clinic/services/{id}         — update service
-  DELETE /clinic/services/{id}         — delete service
-
-DOCTORS
-  GET    /clinic/doctors               — list all doctors
-  POST   /clinic/doctors               — create doctor
-  GET    /clinic/doctors/{id}          — get doctor by ID
-  PATCH  /clinic/doctors/{id}          — update doctor
-  DELETE /clinic/doctors/{id}          — delete doctor
-  GET    /clinic/doctors/{id}/services — services assigned to doctor
-  POST   /clinic/doctors/{id}/services — assign service to doctor
-  DELETE /clinic/doctors/{id}/services/{service_id} — remove service from doctor
-
-SLOTS
-  GET    /clinic/slots                 — list slots (filters: ?doctor_id=&service_id=&available_only=true)
-  POST   /clinic/slots                 — create slot
-  GET    /clinic/slots/{id}            — get slot by ID
-  PATCH  /clinic/slots/{id}            — update slot
-  DELETE /clinic/slots/{id}            — delete slot
-
-AGENT ENDPOINTS (unchanged)
-  GET    /clinic/services              → names list for agent
-  GET    /clinic/doctors?service=name  → doctors for a service
-  GET    /clinic/slots?service=&doctor= → available slots for agent
 """
 
 from fastapi import APIRouter, HTTPException, Query
@@ -39,13 +10,10 @@ from typing import Optional
 from datetime import datetime
 
 from database.models import (
-    # Services
     get_all_services, get_service_by_id, create_service, update_service, delete_service,
-    # Doctors
     get_all_doctors, get_doctor_by_id, create_doctor, update_doctor, delete_doctor,
     get_services_for_doctor, assign_service_to_doctor, remove_service_from_doctor,
-    get_doctors_for_service_db,
-    # Slots
+    get_doctors_for_service_db, get_doctors_filtered,
     get_all_slots, get_slot_by_id, create_slot, update_slot, delete_slot,
     get_available_slots,
 )
@@ -67,20 +35,22 @@ class ServiceUpdate(BaseModel):
     name:             Optional[str] = None
     description:      Optional[str] = None
     duration_minutes: Optional[int] = None
-    active:           Optional[int] = None   # 1 = active, 0 = inactive
+    active:           Optional[int] = None
 
 
 class DoctorCreate(BaseModel):
-    full_name: str
-    title:     Optional[str] = ""
-    bio:       Optional[str] = ""
+    full_name:  str
+    title:      str
+    department: str
+    bio:        str
 
 
 class DoctorUpdate(BaseModel):
-    full_name: Optional[str] = None
-    title:     Optional[str] = None
-    bio:       Optional[str] = None
-    active:    Optional[int] = None   # 1 = active, 0 = inactive
+    full_name:  Optional[str] = None
+    title:      Optional[str] = None
+    department: Optional[str] = None
+    bio:        Optional[str] = None
+    active:     Optional[int] = None
 
 
 class AssignService(BaseModel):
@@ -90,14 +60,14 @@ class AssignService(BaseModel):
 class SlotCreate(BaseModel):
     doctor_id:  str
     service_id: str
-    slot_date:  str   # "YYYY-MM-DD"
-    slot_time:  str   # "HH:MM"
+    slot_date:  str
+    slot_time:  str
 
 
 class SlotUpdate(BaseModel):
     slot_date:  Optional[str] = None
     slot_time:  Optional[str] = None
-    available:  Optional[int] = None   # 1 = available, 0 = booked
+    available:  Optional[int] = None
     doctor_id:  Optional[str] = None
     service_id: Optional[str] = None
 
@@ -108,7 +78,6 @@ class SlotUpdate(BaseModel):
 
 @router.get("/services")
 async def list_services():
-    """List all services. Also returns flat names list for the agent."""
     services = await get_all_services()
     return {
         "services": services,
@@ -119,7 +88,6 @@ async def list_services():
 
 @router.post("/services", status_code=201)
 async def add_service(payload: ServiceCreate):
-    """Create a new service."""
     try:
         service = await create_service(
             name             = payload.name,
@@ -133,7 +101,6 @@ async def add_service(payload: ServiceCreate):
 
 @router.get("/services/{service_id}")
 async def get_service(service_id: str):
-    """Get a single service by ID."""
     service = await get_service_by_id(service_id)
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
@@ -142,7 +109,6 @@ async def get_service(service_id: str):
 
 @router.patch("/services/{service_id}")
 async def patch_service(service_id: str, payload: ServiceUpdate):
-    """Update service fields."""
     service = await get_service_by_id(service_id)
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
@@ -152,10 +118,6 @@ async def patch_service(service_id: str, payload: ServiceUpdate):
 
 @router.delete("/services/{service_id}")
 async def remove_service(service_id: str):
-    """
-    Delete a service. Also removes doctor_services mappings and slots
-    linked to this service (CASCADE).
-    """
     deleted = await delete_service(service_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Service not found")
@@ -168,32 +130,45 @@ async def remove_service(service_id: str):
 
 @router.get("/doctors")
 async def list_doctors(
-    service: Optional[str] = Query(default=None, description="Filter by service name (for agent)")
+    service:    Optional[str] = Query(default=None, description="Filter by service name (agent use)"),
+    search:     Optional[str] = Query(default=None, description="Search by name"),
+    department: Optional[str] = Query(default=None, description="Filter by department"),
+    service_id: Optional[str] = Query(default=None, description="Filter by service UUID"),
+    active:     Optional[int] = Query(default=None, description="Filter by status: 1=active, 0=inactive"),
 ):
     """
-    List all doctors.
-    Pass ?service=IV Therapy to get doctors for a specific service (agent use).
+    List doctors with optional filters.
+
+    Agent use:  ?service=IV Therapy  → doctors for a specific service name
+    Admin use:  ?search=John&department=Cardiology&service_id=xxx&active=1
     """
+    # Agent path — filter by service name only
     if service:
-        # Agent path — filter by service name
         doctors = await get_doctors_for_service_db(service)
         return {
             "doctors": doctors,
             "names":   [d["full_name"] for d in doctors],
             "count":   len(doctors),
         }
-    doctors = await get_all_doctors()
+
+    # Admin path — full filtering
+    doctors = await get_doctors_filtered(
+        search     = search,
+        department = department,
+        service_id = service_id,
+        active     = active,
+    )
     return {"doctors": doctors, "count": len(doctors)}
 
 
 @router.post("/doctors", status_code=201)
 async def add_doctor(payload: DoctorCreate):
-    """Create a new doctor."""
     try:
         doctor = await create_doctor(
-            full_name = payload.full_name,
-            title     = payload.title or "",
-            bio       = payload.bio or "",
+            full_name  = payload.full_name,
+            title      = payload.title,
+            department = payload.department,
+            bio        = payload.bio,
         )
         return {"success": True, "doctor": doctor}
     except Exception as e:
@@ -202,7 +177,6 @@ async def add_doctor(payload: DoctorCreate):
 
 @router.get("/doctors/{doctor_id}")
 async def get_doctor(doctor_id: str):
-    """Get a single doctor by ID."""
     doctor = await get_doctor_by_id(doctor_id)
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
@@ -211,7 +185,6 @@ async def get_doctor(doctor_id: str):
 
 @router.patch("/doctors/{doctor_id}")
 async def patch_doctor(doctor_id: str, payload: DoctorUpdate):
-    """Update doctor fields."""
     doctor = await get_doctor_by_id(doctor_id)
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
@@ -221,9 +194,6 @@ async def patch_doctor(doctor_id: str, payload: DoctorUpdate):
 
 @router.delete("/doctors/{doctor_id}")
 async def remove_doctor(doctor_id: str):
-    """
-    Delete a doctor. Also removes doctor_services mappings and slots (CASCADE).
-    """
     deleted = await delete_doctor(doctor_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Doctor not found")
@@ -232,7 +202,6 @@ async def remove_doctor(doctor_id: str):
 
 @router.get("/doctors/{doctor_id}/services")
 async def get_doctor_services(doctor_id: str):
-    """Get all services assigned to a doctor."""
     doctor = await get_doctor_by_id(doctor_id)
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
@@ -242,7 +211,6 @@ async def get_doctor_services(doctor_id: str):
 
 @router.post("/doctors/{doctor_id}/services", status_code=201)
 async def assign_doctor_service(doctor_id: str, payload: AssignService):
-    """Assign a service to a doctor."""
     await assign_service_to_doctor(doctor_id, payload.service_id)
     services = await get_services_for_doctor(doctor_id)
     return {"success": True, "doctor_id": doctor_id, "services": services}
@@ -250,7 +218,6 @@ async def assign_doctor_service(doctor_id: str, payload: AssignService):
 
 @router.delete("/doctors/{doctor_id}/services/{service_id}")
 async def unassign_doctor_service(doctor_id: str, service_id: str):
-    """Remove a service assignment from a doctor."""
     removed = await remove_service_from_doctor(doctor_id, service_id)
     if not removed:
         raise HTTPException(status_code=404, detail="Assignment not found")
@@ -263,20 +230,13 @@ async def unassign_doctor_service(doctor_id: str, service_id: str):
 
 @router.get("/slots")
 async def list_slots(
-    service:        Optional[str]  = Query(default=None, description="Service name (agent use)"),
-    doctor:         Optional[str]  = Query(default=None, description="Doctor name (agent use)"),
-    doctor_id:      Optional[str]  = Query(default=None, description="Doctor UUID (admin use)"),
-    service_id:     Optional[str]  = Query(default=None, description="Service UUID (admin use)"),
-    available_only: bool           = Query(default=False),
-    limit:          int            = Query(default=6, ge=1, le=100),
+    service:        Optional[str] = Query(default=None),
+    doctor:         Optional[str] = Query(default=None),
+    doctor_id:      Optional[str] = Query(default=None),
+    service_id:     Optional[str] = Query(default=None),
+    available_only: bool          = Query(default=False),
+    limit:          int           = Query(default=6, ge=1, le=100),
 ):
-    """
-    List slots.
-
-    Agent use:   ?service=IV Therapy&doctor=Dr. Stefan Koch
-    Admin use:   ?doctor_id=doc-2&service_id=svc-10&available_only=true
-    """
-    # Agent path — filter by name, return spoken options
     if service and doctor:
         slots = await get_available_slots(
             service_name = service,
@@ -290,7 +250,6 @@ async def list_slots(
                   for i, s in enumerate(slots, 1)]
         return {"slots": slots, "spoken_options": spoken, "count": len(slots)}
 
-    # Admin path — full list with optional filters
     slots = await get_all_slots(
         doctor_id      = doctor_id,
         service_id     = service_id,
@@ -301,12 +260,6 @@ async def list_slots(
 
 @router.post("/slots", status_code=201)
 async def add_slot(payload: SlotCreate):
-    """
-    Create a new appointment slot.
-    slot_date format: YYYY-MM-DD
-    slot_time format: HH:MM  (e.g. 09:00)
-    """
-    # Validate date/time format
     try:
         datetime.strptime(payload.slot_date, "%Y-%m-%d")
         datetime.strptime(payload.slot_time, "%H:%M")
@@ -329,7 +282,6 @@ async def add_slot(payload: SlotCreate):
 
 @router.get("/slots/{slot_id}")
 async def get_slot(slot_id: str):
-    """Get a single slot by ID."""
     slot = await get_slot_by_id(slot_id)
     if not slot:
         raise HTTPException(status_code=404, detail="Slot not found")
@@ -338,10 +290,6 @@ async def get_slot(slot_id: str):
 
 @router.patch("/slots/{slot_id}")
 async def patch_slot(slot_id: str, payload: SlotUpdate):
-    """
-    Update slot fields. Use available=0 to manually mark as booked,
-    available=1 to reopen a slot.
-    """
     slot = await get_slot_by_id(slot_id)
     if not slot:
         raise HTTPException(status_code=404, detail="Slot not found")
@@ -351,7 +299,6 @@ async def patch_slot(slot_id: str, payload: SlotUpdate):
 
 @router.delete("/slots/{slot_id}")
 async def remove_slot(slot_id: str):
-    """Delete a slot permanently."""
     deleted = await delete_slot(slot_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Slot not found")
