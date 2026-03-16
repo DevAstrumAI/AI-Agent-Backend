@@ -11,6 +11,7 @@ from datetime import datetime
 
 from database.models import (
     get_all_services, get_service_by_id, create_service, update_service, delete_service,
+    get_services_filtered,
     get_all_doctors, get_doctor_by_id, create_doctor, update_doctor, delete_doctor,
     get_services_for_doctor, assign_service_to_doctor, remove_service_from_doctor,
     get_doctors_for_service_db, get_doctors_filtered,
@@ -77,8 +78,26 @@ class SlotUpdate(BaseModel):
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/services")
-async def list_services():
-    services = await get_all_services()
+async def list_services(
+    search:    Optional[str] = Query(default=None, description="Search by name"),
+    doctor_id: Optional[str] = Query(default=None, description="Filter by doctor UUID"),
+    duration:  Optional[int] = Query(default=None, description="Filter by exact duration in minutes"),
+    active:    Optional[int] = Query(default=None, description="Filter by status: 1=active, 0=inactive"),
+):
+    """
+    List services with optional filters.
+    All params are optional and combinable.
+    """
+    if any(v is not None for v in [search, doctor_id, duration, active]):
+        services = await get_services_filtered(
+            search    = search,
+            doctor_id = doctor_id,
+            duration  = duration,
+            active    = active,
+        )
+    else:
+        services = await get_all_services()
+
     return {
         "services": services,
         "names":    [s["name"] for s in services if s.get("active", 1)],
@@ -142,7 +161,6 @@ async def list_doctors(
     Agent use:  ?service=IV Therapy  → doctors for a specific service name
     Admin use:  ?search=John&department=Cardiology&service_id=xxx&active=1
     """
-    # Agent path — filter by service name only
     if service:
         doctors = await get_doctors_for_service_db(service)
         return {
@@ -151,7 +169,6 @@ async def list_doctors(
             "count":   len(doctors),
         }
 
-    # Admin path — full filtering
     doctors = await get_doctors_filtered(
         search     = search,
         department = department,

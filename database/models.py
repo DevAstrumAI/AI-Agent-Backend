@@ -183,6 +183,62 @@ async def delete_service(service_id: str) -> bool:
         return result.split()[-1] != "0"
 
 
+async def get_services_filtered(
+    search:    str | None = None,
+    doctor_id: str | None = None,
+    duration:  int | None = None,
+    active:    int | None = None,
+) -> list[dict]:
+    """
+    Filter services by name search, assigned doctor, duration, and active status.
+    All filters are optional and combinable.
+    """
+    conditions = []
+    params     = []
+    i          = 1
+
+    # Name search (case-insensitive partial match)
+    if search:
+        conditions.append(f"LOWER(s.name) LIKE LOWER(${i})")
+        params.append(f"%{search}%")
+        i += 1
+
+    # Duration exact match
+    if duration is not None:
+        conditions.append(f"s.duration_minutes = ${i}")
+        params.append(duration)
+        i += 1
+
+    # Active status
+    if active is not None:
+        conditions.append(f"s.active = ${i}")
+        params.append(active)
+        i += 1
+
+    # Doctor filter using EXISTS subquery
+    if doctor_id:
+        conditions.append(
+            f"EXISTS ("
+            f"  SELECT 1 FROM doctor_services ds"
+            f"  WHERE ds.service_id = s.id AND ds.doctor_id = ${i}"
+            f")"
+        )
+        params.append(doctor_id)
+        i += 1
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            f"SELECT * FROM services s"
+            f" {where}"
+            f" ORDER BY s.name",
+            *params,
+        )
+        return [dict(r) for r in rows]
+
+
 # ─────────────────────────────────────────────────────────────
 # DOCTORS CRUD
 # ─────────────────────────────────────────────────────────────
@@ -313,25 +369,21 @@ async def get_doctors_filtered(
     params     = []
     i          = 1
 
-    # Name search (case-insensitive partial match)
     if search:
         conditions.append(f"LOWER(d.full_name) LIKE LOWER(${i})")
         params.append(f"%{search}%")
         i += 1
 
-    # Department exact match (case-insensitive)
     if department:
         conditions.append(f"LOWER(d.department) = LOWER(${i})")
         params.append(department)
         i += 1
 
-    # Active status
     if active is not None:
         conditions.append(f"d.active = ${i}")
         params.append(active)
         i += 1
 
-    # Service filter using EXISTS subquery
     if service_id:
         conditions.append(
             f"EXISTS ("
