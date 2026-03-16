@@ -1,59 +1,77 @@
 """
 RAG Backend — database/models.py
 ==================================
-SQLite schema + full CRUD for:
+PostgreSQL schema + full CRUD for:
   - services
   - doctors
   - doctor_services  (many-to-many)
   - slots
   - bookings
+
+Uses asyncpg via the DATABASE_URL environment variable.
+Set DATABASE_URL in Render dashboard under Environment Variables:
+  postgresql://user:password@host:5432/dbname
 """
 
-import aiosqlite
+import asyncpg
 import os
 import uuid
 from datetime import datetime
-from pathlib import Path
 
-DB_PATH = os.getenv("DB_PATH", "data/functiomed.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+_pool: asyncpg.Pool | None = None
 
 
 # ─────────────────────────────────────────────────────────────
-# Schema
+# Pool management
 # ─────────────────────────────────────────────────────────────
+
+async def get_pool() -> asyncpg.Pool:
+    global _pool
+    if _pool is None:
+        raise RuntimeError("Database pool not initialized. Call init_db() first.")
+    return _pool
+
 
 async def init_db():
-    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA journal_mode=WAL")
-        await db.execute("PRAGMA foreign_keys=ON")
+    global _pool
 
-        await db.execute("""
+    if not DATABASE_URL:
+        raise EnvironmentError("DATABASE_URL not set. Add it to your environment.")
+
+    # Render provides postgres:// but asyncpg needs postgresql://
+    url = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+    _pool = await asyncpg.create_pool(url, min_size=2, max_size=10)
+
+    async with _pool.acquire() as conn:
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS services (
                 id               TEXT PRIMARY KEY,
                 name             TEXT NOT NULL UNIQUE,
-                description      TEXT,
+                description      TEXT DEFAULT '',
                 duration_minutes INTEGER DEFAULT 60,
                 active           INTEGER DEFAULT 1
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS doctors (
                 id        TEXT PRIMARY KEY,
                 full_name TEXT NOT NULL,
                 title     TEXT DEFAULT '',
-                bio       TEXT,
+                bio       TEXT DEFAULT '',
                 active    INTEGER DEFAULT 1
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS doctor_services (
                 doctor_id  TEXT NOT NULL REFERENCES doctors(id) ON DELETE CASCADE,
                 service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
                 PRIMARY KEY (doctor_id, service_id)
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS slots (
                 id         TEXT PRIMARY KEY,
                 doctor_id  TEXT NOT NULL REFERENCES doctors(id) ON DELETE CASCADE,
@@ -63,9 +81,9 @@ async def init_db():
                 available  INTEGER DEFAULT 1
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS bookings (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                id                  SERIAL PRIMARY KEY,
                 confirmation_number TEXT NOT NULL UNIQUE,
                 slot_id             TEXT REFERENCES slots(id),
                 service_id          TEXT REFERENCES services(id),
@@ -77,12 +95,29 @@ async def init_db():
                 slot_time           TEXT,
                 language            TEXT DEFAULT 'en',
                 status              TEXT DEFAULT 'confirmed',
-                booked_at           TEXT DEFAULT (datetime('now')),
+                booked_at           TEXT DEFAULT (to_char(NOW(), 'YYYY-MM-DD HH24:MI:SS')),
                 session_summary     TEXT
             )
         """)
-        await db.commit()
-    print(f"✅ Database ready: {DB_PATH}")
+
+    print(f"✅ PostgreSQL database ready")
+
+
+async def close_db():
+    global _pool
+    if _pool:
+        await _pool.close()
+        _pool = None
+
+
+# ─────────────────────────────────────────────────────────────
+# Helper
+# ─────────────────────────────────────────────────────────────
+
+def _generate_confirmation() -> str:
+    year  = datetime.now().year
+    short = str(uuid.uuid4())[:6].upper()
+    return f"FM-{year}-{short}"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -90,36 +125,36 @@ async def init_db():
 # ─────────────────────────────────────────────────────────────
 
 async def get_all_services() -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT * FROM services ORDER BY name")
-        return [dict(r) for r in await cur.fetchall()]
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM services ORDER BY name")
+        return [dict(r) for r in rows]
 
 
 async def get_service_by_id(service_id: str) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT * FROM services WHERE id=?", (service_id,))
-        row = await cur.fetchone()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM services WHERE id=$1", service_id)
         return dict(row) if row else None
 
 
 async def get_service_by_name(name: str) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT * FROM services WHERE LOWER(name)=LOWER(?) AND active=1", (name,))
-        row = await cur.fetchone()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM services WHERE LOWER(name)=LOWER($1) AND active=1", name
+        )
         return dict(row) if row else None
 
 
 async def create_service(name: str, description: str = "", duration_minutes: int = 60) -> dict:
-    sid = str(uuid.uuid4())
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO services (id, name, description, duration_minutes) VALUES (?,?,?,?)",
-            (sid, name, description, duration_minutes),
+    sid  = str(uuid.uuid4())
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO services (id, name, description, duration_minutes) VALUES ($1,$2,$3,$4)",
+            sid, name, description, duration_minutes,
         )
-        await db.commit()
     return await get_service_by_id(sid)
 
 
@@ -128,22 +163,23 @@ async def update_service(service_id: str, **fields) -> dict | None:
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if not updates:
         return await get_service_by_id(service_id)
-    set_clause = ", ".join(f"{k}=?" for k in updates)
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            f"UPDATE services SET {set_clause} WHERE id=?",
-            (*updates.values(), service_id),
+    set_parts  = [f"{k}=${i+1}" for i, k in enumerate(updates.keys())]
+    set_clause = ", ".join(set_parts)
+    values     = list(updates.values()) + [service_id]
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            f"UPDATE services SET {set_clause} WHERE id=${len(values)}",
+            *values,
         )
-        await db.commit()
     return await get_service_by_id(service_id)
 
 
 async def delete_service(service_id: str) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA foreign_keys=ON")
-        cur = await db.execute("DELETE FROM services WHERE id=?", (service_id,))
-        await db.commit()
-        return cur.rowcount > 0
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute("DELETE FROM services WHERE id=$1", service_id)
+        return result.split()[-1] != "0"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -151,36 +187,36 @@ async def delete_service(service_id: str) -> bool:
 # ─────────────────────────────────────────────────────────────
 
 async def get_all_doctors() -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT * FROM doctors ORDER BY full_name")
-        return [dict(r) for r in await cur.fetchall()]
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM doctors ORDER BY full_name")
+        return [dict(r) for r in rows]
 
 
 async def get_doctor_by_id(doctor_id: str) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT * FROM doctors WHERE id=?", (doctor_id,))
-        row = await cur.fetchone()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM doctors WHERE id=$1", doctor_id)
         return dict(row) if row else None
 
 
 async def get_doctor_by_name(name: str) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT * FROM doctors WHERE LOWER(full_name)=LOWER(?) AND active=1", (name,))
-        row = await cur.fetchone()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM doctors WHERE LOWER(full_name)=LOWER($1) AND active=1", name
+        )
         return dict(row) if row else None
 
 
 async def create_doctor(full_name: str, title: str = "", bio: str = "") -> dict:
-    did = str(uuid.uuid4())
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO doctors (id, full_name, title, bio) VALUES (?,?,?,?)",
-            (did, full_name, title, bio),
+    did  = str(uuid.uuid4())
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO doctors (id, full_name, title, bio) VALUES ($1,$2,$3,$4)",
+            did, full_name, title, bio,
         )
-        await db.commit()
     return await get_doctor_by_id(did)
 
 
@@ -189,126 +225,130 @@ async def update_doctor(doctor_id: str, **fields) -> dict | None:
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if not updates:
         return await get_doctor_by_id(doctor_id)
-    set_clause = ", ".join(f"{k}=?" for k in updates)
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            f"UPDATE doctors SET {set_clause} WHERE id=?",
-            (*updates.values(), doctor_id),
+    set_parts  = [f"{k}=${i+1}" for i, k in enumerate(updates.keys())]
+    set_clause = ", ".join(set_parts)
+    values     = list(updates.values()) + [doctor_id]
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            f"UPDATE doctors SET {set_clause} WHERE id=${len(values)}",
+            *values,
         )
-        await db.commit()
     return await get_doctor_by_id(doctor_id)
 
 
 async def delete_doctor(doctor_id: str) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA foreign_keys=ON")
-        cur = await db.execute("DELETE FROM doctors WHERE id=?", (doctor_id,))
-        await db.commit()
-        return cur.rowcount > 0
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute("DELETE FROM doctors WHERE id=$1", doctor_id)
+        return result.split()[-1] != "0"
 
 
 async def get_services_for_doctor(doctor_id: str) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute(
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
             """
             SELECT s.* FROM services s
             JOIN doctor_services ds ON ds.service_id = s.id
-            WHERE ds.doctor_id = ?
+            WHERE ds.doctor_id = $1
             ORDER BY s.name
             """,
-            (doctor_id,),
+            doctor_id,
         )
-        return [dict(r) for r in await cur.fetchall()]
+        return [dict(r) for r in rows]
 
 
 async def assign_service_to_doctor(doctor_id: str, service_id: str) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA foreign_keys=ON")
-        await db.execute(
-            "INSERT OR IGNORE INTO doctor_services (doctor_id, service_id) VALUES (?,?)",
-            (doctor_id, service_id),
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO doctor_services (doctor_id, service_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+            doctor_id, service_id,
         )
-        await db.commit()
     return True
 
 
 async def remove_service_from_doctor(doctor_id: str, service_id: str) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "DELETE FROM doctor_services WHERE doctor_id=? AND service_id=?",
-            (doctor_id, service_id),
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM doctor_services WHERE doctor_id=$1 AND service_id=$2",
+            doctor_id, service_id,
         )
-        await db.commit()
-        return cur.rowcount > 0
+        return result.split()[-1] != "0"
 
 
 async def get_doctors_for_service_db(service_name: str) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute(
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
             """
             SELECT d.id, d.full_name, d.title, d.bio
             FROM doctors d
             JOIN doctor_services ds ON ds.doctor_id = d.id
             JOIN services s ON s.id = ds.service_id
-            WHERE LOWER(s.name) = LOWER(?) AND d.active=1 AND s.active=1
+            WHERE LOWER(s.name) = LOWER($1) AND d.active=1 AND s.active=1
             ORDER BY d.full_name
             """,
-            (service_name,),
+            service_name,
         )
-        return [dict(r) for r in await cur.fetchall()]
+        return [dict(r) for r in rows]
 
 
 # ─────────────────────────────────────────────────────────────
 # SLOTS CRUD
 # ─────────────────────────────────────────────────────────────
 
-async def get_all_slots(doctor_id: str = None, service_id: str = None, available_only: bool = False) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        conditions = []
-        params     = []
-        if doctor_id:
-            conditions.append("sl.doctor_id=?")
-            params.append(doctor_id)
-        if service_id:
-            conditions.append("sl.service_id=?")
-            params.append(service_id)
-        if available_only:
-            conditions.append("sl.available=1")
-        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-        cur = await db.execute(
+async def get_all_slots(
+    doctor_id: str = None,
+    service_id: str = None,
+    available_only: bool = False,
+) -> list[dict]:
+    conditions = []
+    params     = []
+    i          = 1
+
+    if doctor_id:
+        conditions.append(f"sl.doctor_id=${i}"); params.append(doctor_id); i += 1
+    if service_id:
+        conditions.append(f"sl.service_id=${i}"); params.append(service_id); i += 1
+    if available_only:
+        conditions.append("sl.available=1")
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
             f"""
             SELECT sl.*, d.full_name AS doctor_name, s.name AS service_name
             FROM slots sl
-            JOIN doctors d  ON d.id = sl.doctor_id
+            JOIN doctors  d ON d.id = sl.doctor_id
             JOIN services s ON s.id = sl.service_id
             {where}
             ORDER BY sl.slot_date, sl.slot_time
             """,
-            params,
+            *params,
         )
-        return [dict(r) for r in await cur.fetchall()]
+        return [dict(r) for r in rows]
 
 
 async def get_slot_by_id(slot_id: str) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT * FROM slots WHERE id=?", (slot_id,))
-        row = await cur.fetchone()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM slots WHERE id=$1", slot_id)
         return dict(row) if row else None
 
 
 async def create_slot(doctor_id: str, service_id: str, slot_date: str, slot_time: str) -> dict:
-    sid = str(uuid.uuid4())
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA foreign_keys=ON")
-        await db.execute(
-            "INSERT INTO slots (id, doctor_id, service_id, slot_date, slot_time) VALUES (?,?,?,?,?)",
-            (sid, doctor_id, service_id, slot_date, slot_time),
+    sid  = str(uuid.uuid4())
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO slots (id, doctor_id, service_id, slot_date, slot_time) VALUES ($1,$2,$3,$4,$5)",
+            sid, doctor_id, service_id, slot_date, slot_time,
         )
-        await db.commit()
     return await get_slot_by_id(sid)
 
 
@@ -317,50 +357,52 @@ async def update_slot(slot_id: str, **fields) -> dict | None:
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if not updates:
         return await get_slot_by_id(slot_id)
-    set_clause = ", ".join(f"{k}=?" for k in updates)
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            f"UPDATE slots SET {set_clause} WHERE id=?",
-            (*updates.values(), slot_id),
+    set_parts  = [f"{k}=${i+1}" for i, k in enumerate(updates.keys())]
+    set_clause = ", ".join(set_parts)
+    values     = list(updates.values()) + [slot_id]
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            f"UPDATE slots SET {set_clause} WHERE id=${len(values)}",
+            *values,
         )
-        await db.commit()
     return await get_slot_by_id(slot_id)
 
 
 async def delete_slot(slot_id: str) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("DELETE FROM slots WHERE id=?", (slot_id,))
-        await db.commit()
-        return cur.rowcount > 0
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute("DELETE FROM slots WHERE id=$1", slot_id)
+        return result.split()[-1] != "0"
 
 
 async def mark_slot_unavailable(slot_id: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE slots SET available=0 WHERE id=?", (slot_id,))
-        await db.commit()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE slots SET available=0 WHERE id=$1", slot_id)
 
 
 async def get_available_slots(service_name: str, doctor_name: str, limit: int = 6) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        today = datetime.now().date().strftime("%Y-%m-%d")
-        cur = await db.execute(
+    today = datetime.now().date().strftime("%Y-%m-%d")
+    pool  = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
             """
             SELECT sl.id, sl.slot_date, sl.slot_time,
                    d.full_name AS doctor_name, s.name AS service_name, s.duration_minutes
             FROM slots sl
             JOIN doctors  d ON d.id = sl.doctor_id
             JOIN services s ON s.id = sl.service_id
-            WHERE LOWER(d.full_name) = LOWER(?)
-              AND LOWER(s.name)      = LOWER(?)
+            WHERE LOWER(d.full_name) = LOWER($1)
+              AND LOWER(s.name)      = LOWER($2)
               AND sl.available       = 1
-              AND sl.slot_date       >= ?
+              AND sl.slot_date       >= $3
             ORDER BY sl.slot_date, sl.slot_time
-            LIMIT ?
+            LIMIT $4
             """,
-            (doctor_name, service_name, today, limit),
+            doctor_name, service_name, today, limit,
         )
-        return [dict(r) for r in await cur.fetchall()]
+        return [dict(r) for r in rows]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -368,28 +410,27 @@ async def get_available_slots(service_name: str, doctor_name: str, limit: int = 
 # ─────────────────────────────────────────────────────────────
 
 async def get_all_bookings(status: str = None) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         if status:
-            cur = await db.execute(
-                "SELECT * FROM bookings WHERE status=? ORDER BY booked_at DESC", (status,)
+            rows = await conn.fetch(
+                "SELECT * FROM bookings WHERE status=$1 ORDER BY booked_at DESC", status
             )
         else:
-            cur = await db.execute("SELECT * FROM bookings ORDER BY booked_at DESC")
-        return [dict(r) for r in await cur.fetchall()]
+            rows = await conn.fetch("SELECT * FROM bookings ORDER BY booked_at DESC")
+        return [dict(r) for r in rows]
 
 
 async def get_booking_by_id(booking_id: int | str) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         try:
             int_id = int(booking_id)
-            cur = await db.execute("SELECT * FROM bookings WHERE id=?", (int_id,))
+            row    = await conn.fetchrow("SELECT * FROM bookings WHERE id=$1", int_id)
         except (ValueError, TypeError):
-            cur = await db.execute(
-                "SELECT * FROM bookings WHERE confirmation_number=?", (booking_id,)
+            row = await conn.fetchrow(
+                "SELECT * FROM bookings WHERE confirmation_number=$1", booking_id
             )
-        row = await cur.fetchone()
         return dict(row) if row else None
 
 
@@ -421,24 +462,22 @@ async def save_booking(
             print(f"⚠️  slot_id {slot_id} not found, booking without slot reference")
             slot_id = None
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("PRAGMA journal_mode=WAL")
-        await db.execute(
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
             """
             INSERT INTO bookings
               (confirmation_number, slot_id, service_id, doctor_id,
                service_name, doctor_name, patient_name,
                slot_date, slot_time, language, session_summary)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            RETURNING id
             """,
-            (confirmation, slot_id, service_id, doctor_id,
-             service_name, doctor_name, patient_name,
-             slot_date, slot_time, language, session_summary),
+            confirmation, slot_id, service_id, doctor_id,
+            service_name, doctor_name, patient_name,
+            slot_date, slot_time, language, session_summary,
         )
-        await db.commit()
-        row = await db.execute("SELECT last_insert_rowid()")
-        result = await row.fetchone()
-        new_id = result[0] if result else None
+        new_id = row["id"] if row else None
 
     return {
         "id":                  new_id,
@@ -457,45 +496,37 @@ async def update_booking(booking_id: int | str, **fields) -> dict | None:
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if not updates:
         return await get_booking_by_id(booking_id)
-    set_clause = ", ".join(f"{k}=?" for k in updates)
-    async with aiosqlite.connect(DB_PATH) as db:
+    set_parts  = [f"{k}=${i+1}" for i, k in enumerate(updates.keys())]
+    set_clause = ", ".join(set_parts)
+    values     = list(updates.values())
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         try:
             int_id = int(booking_id)
-            await db.execute(
-                f"UPDATE bookings SET {set_clause} WHERE id=?",
-                (*updates.values(), int_id),
+            await conn.execute(
+                f"UPDATE bookings SET {set_clause} WHERE id=${len(values)+1}",
+                *values, int_id,
             )
         except (ValueError, TypeError):
-            await db.execute(
-                f"UPDATE bookings SET {set_clause} WHERE confirmation_number=?",
-                (*updates.values(), booking_id),
+            await conn.execute(
+                f"UPDATE bookings SET {set_clause} WHERE confirmation_number=${len(values)+1}",
+                *values, booking_id,
             )
-        await db.commit()
     return await get_booking_by_id(booking_id)
 
 
 async def delete_booking(booking_id: int | str) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         try:
             int_id = int(booking_id)
-            cur = await db.execute("DELETE FROM bookings WHERE id=?", (int_id,))
+            result = await conn.execute("DELETE FROM bookings WHERE id=$1", int_id)
         except (ValueError, TypeError):
-            cur = await db.execute(
-                "DELETE FROM bookings WHERE confirmation_number=?", (booking_id,)
+            result = await conn.execute(
+                "DELETE FROM bookings WHERE confirmation_number=$1", booking_id
             )
-        await db.commit()
-        return cur.rowcount > 0
+        return result.split()[-1] != "0"
 
 
 async def cancel_booking_db(booking_id: int | str) -> dict | None:
     return await update_booking(booking_id, status="cancelled")
-
-
-# ─────────────────────────────────────────────────────────────
-# Helper
-# ─────────────────────────────────────────────────────────────
-
-def _generate_confirmation() -> str:
-    year  = datetime.now().year
-    short = str(uuid.uuid4())[:6].upper()
-    return f"FM-{year}-{short}"

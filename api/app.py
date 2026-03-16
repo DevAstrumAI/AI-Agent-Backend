@@ -22,7 +22,7 @@ from llm.generator import ask, detect_language
 
 from api.bookings_router import router as bookings_router
 from api.clinic_router    import router as clinic_router
-from database.models      import init_db
+from database.models      import init_db, close_db   # ← close_db added
 
 _pipeline_ready = False
 _pipeline_error = None
@@ -72,6 +72,7 @@ async def lifespan(app: FastAPI):
     yield
 
     print("\n👋 Shutting down...")
+    await close_db()   # ← close PostgreSQL pool on shutdown
 
 
 app = FastAPI(
