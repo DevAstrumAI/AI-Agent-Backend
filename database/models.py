@@ -101,6 +101,10 @@ async def init_db():
         await conn.execute(
             "ALTER TABLE doctors ADD COLUMN IF NOT EXISTS department TEXT DEFAULT ''"
         )
+
+        # Backfill older rows: NULL should behave as available (1)
+        await conn.execute("UPDATE slots SET available=1 WHERE available IS NULL")
+
         # Unique constraint on slots
         await conn.execute("""
             DO $$
@@ -338,7 +342,7 @@ async def get_doctors_for_service_db(service_name: str) -> list[dict]:
             " FROM doctors d"
             " JOIN doctor_services ds ON ds.doctor_id = d.id"
             " JOIN services s ON s.id = ds.service_id"
-            " WHERE LOWER(s.name) = LOWER($1) AND d.active=1 AND s.active=1"
+            " WHERE LOWER(BTRIM(s.name)) = LOWER(BTRIM($1)) AND d.active=1 AND s.active=1"
             " ORDER BY d.full_name",
             service_name,
         )
@@ -438,8 +442,8 @@ async def create_slot(doctor_id: str, service_id: str, slot_date: str, slot_time
     async with pool.acquire() as conn:
         try:
             await conn.execute(
-                "INSERT INTO slots (id, doctor_id, service_id, slot_date, slot_time)"
-                " VALUES ($1,$2,$3,$4,$5)",
+                "INSERT INTO slots (id, doctor_id, service_id, slot_date, slot_time, available)"
+                " VALUES ($1,$2,$3,$4,$5,1)",
                 sid, doctor_id, service_id, slot_date, slot_time,
             )
         except asyncpg.UniqueViolationError:
@@ -478,10 +482,29 @@ async def delete_slot(slot_id: str) -> bool:
         return result.split()[-1] != "0"
 
 
-async def mark_slot_unavailable(slot_id: str):
+async def mark_slot_unavailable(slot_id: str, conn: asyncpg.Connection | None = None) -> bool:
+    """
+    Mark a slot as unavailable (available=0).
+
+    Returns True if we successfully changed it from available->unavailable.
+    Returns False if slot doesn't exist or was already unavailable.
+    """
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("UPDATE slots SET available=0 WHERE id=$1", slot_id)
+    if conn is None:
+        async with pool.acquire() as _conn:
+            return await mark_slot_unavailable(slot_id, conn=_conn)
+
+    result = await conn.execute(
+        "UPDATE slots SET available=0"
+        " WHERE id=$1 AND COALESCE(available, 1)=1",
+        slot_id,
+    )
+    # asyncpg returns strings like "UPDATE 1"
+    try:
+        changed = int(result.split()[-1])
+    except Exception:
+        changed = 0
+    return changed == 1
 
 
 async def get_available_slots(service_name: str, doctor_name: str, limit: int = 6) -> list[dict]:
@@ -494,9 +517,9 @@ async def get_available_slots(service_name: str, doctor_name: str, limit: int = 
             " FROM slots sl"
             " JOIN doctors d ON d.id = sl.doctor_id"
             " JOIN services s ON s.id = sl.service_id"
-            " WHERE LOWER(d.full_name) = LOWER($1)"
-            "   AND LOWER(s.name)      = LOWER($2)"
-            "   AND sl.available       = 1"
+            " WHERE LOWER(BTRIM(d.full_name)) = LOWER(BTRIM($1))"
+            "   AND LOWER(BTRIM(s.name))      = LOWER(BTRIM($2))"
+            "   AND COALESCE(sl.available, 1) = 1"
             "   AND sl.slot_date       >= $3"
             " ORDER BY sl.slot_date, sl.slot_time"
             " LIMIT $4",
@@ -621,30 +644,40 @@ async def save_booking(
     slot_date = None
     slot_time = None
 
-    if slot_id:
-        slot = await get_slot_by_id(slot_id)
-        if slot:
-            slot_date = slot["slot_date"]
-            slot_time = slot["slot_time"]
-            await mark_slot_unavailable(slot_id)
-        else:
-            print(f"⚠️  slot_id {slot_id} not found, booking without slot reference")
-            slot_id = None
-
     pool = await get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "INSERT INTO bookings"
-            "  (confirmation_number, slot_id, service_id, doctor_id,"
-            "   service_name, doctor_name, patient_name,"
-            "   slot_date, slot_time, language, session_summary)"
-            " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
-            " RETURNING id",
-            confirmation, slot_id, service_id, doctor_id,
-            service_name, doctor_name, patient_name,
-            slot_date, slot_time, language, session_summary,
-        )
-        new_id = row["id"] if row else None
+        async with conn.transaction():
+            # If a slot_id was provided, lock the slot row and consume it.
+            if slot_id:
+                slot = await conn.fetchrow(
+                    "SELECT id, slot_date, slot_time, available"
+                    " FROM slots WHERE id=$1 FOR UPDATE",
+                    slot_id,
+                )
+                if not slot:
+                    print(f"⚠️  slot_id {slot_id} not found, booking without slot reference")
+                    slot_id = None
+                else:
+                    slot_date = slot["slot_date"]
+                    slot_time = slot["slot_time"]
+
+                    consumed = await mark_slot_unavailable(slot_id, conn=conn)
+                    if not consumed:
+                        # Slot exists but is already booked/closed.
+                        raise ValueError("Selected slot is no longer available. Please choose another slot.")
+
+            row = await conn.fetchrow(
+                "INSERT INTO bookings"
+                "  (confirmation_number, slot_id, service_id, doctor_id,"
+                "   service_name, doctor_name, patient_name,"
+                "   slot_date, slot_time, language, session_summary)"
+                " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+                " RETURNING id",
+                confirmation, slot_id, service_id, doctor_id,
+                service_name, doctor_name, patient_name,
+                slot_date, slot_time, language, session_summary,
+            )
+            new_id = row["id"] if row else None
 
     return {
         "id":                  new_id,
@@ -683,17 +716,77 @@ async def update_booking(booking_id: int | str, **fields) -> dict | None:
 
 
 async def delete_booking(booking_id: int | str) -> bool:
+    """
+    Hard delete a booking. If the booking referenced a slot, attempt to reopen it
+    (available=1) so it becomes bookable again.
+
+    Note: we only reopen the slot if there are no other *confirmed* bookings
+    referencing the same slot_id.
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
-        try:
-            int_id = int(booking_id)
-            result = await conn.execute("DELETE FROM bookings WHERE id=$1", int_id)
-        except (ValueError, TypeError):
-            result = await conn.execute(
-                "DELETE FROM bookings WHERE confirmation_number=$1", booking_id
-            )
-        return result.split()[-1] != "0"
+        async with conn.transaction():
+            # Fetch booking (to get slot_id) and delete it
+            if isinstance(booking_id, int):
+                booking = await conn.fetchrow("SELECT id, slot_id FROM bookings WHERE id=$1", booking_id)
+            else:
+                # Could be numeric string or confirmation number
+                try:
+                    int_id = int(booking_id)
+                    booking = await conn.fetchrow("SELECT id, slot_id FROM bookings WHERE id=$1", int_id)
+                except (ValueError, TypeError):
+                    booking = await conn.fetchrow(
+                        "SELECT id, slot_id FROM bookings WHERE confirmation_number=$1",
+                        booking_id,
+                    )
+
+            if not booking:
+                return False
+
+            slot_id = booking["slot_id"]
+            deleted = await conn.execute("DELETE FROM bookings WHERE id=$1", booking["id"])
+            was_deleted = deleted.split()[-1] != "0"
+            if not was_deleted:
+                return False
+
+            if slot_id:
+                # If no other booking references this slot, delete the slot too.
+                still_referenced = await conn.fetchval(
+                    "SELECT EXISTS("
+                    "  SELECT 1 FROM bookings"
+                    "  WHERE slot_id=$1"
+                    ")",
+                    slot_id,
+                )
+                if not still_referenced:
+                    await conn.execute("DELETE FROM slots WHERE id=$1", slot_id)
+
+            return True
 
 
 async def cancel_booking_db(booking_id: int | str) -> dict | None:
-    return await update_booking(booking_id, status="cancelled")
+    """
+    Soft-cancel a booking (status=cancelled). If it referenced a slot, reopen it
+    unless another confirmed booking still references the same slot_id.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            booking = await get_booking_by_id(booking_id)
+            if not booking:
+                return None
+
+            updated = await update_booking(booking_id, status="cancelled")
+            slot_id = booking.get("slot_id")
+            if slot_id:
+                still_used = await conn.fetchval(
+                    "SELECT EXISTS("
+                    "  SELECT 1 FROM bookings"
+                    "  WHERE slot_id=$1 AND status='confirmed'"
+                    ")",
+                    slot_id,
+                )
+                if not still_used:
+                    await conn.execute("UPDATE slots SET available=1 WHERE id=$1", slot_id)
+
+            return updated

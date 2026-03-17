@@ -15,6 +15,7 @@ Requirements:
 """
 
 import os
+import json
 from fastapi import APIRouter, HTTPException, Query
 from livekit.api import AccessToken, VideoGrants
 
@@ -28,6 +29,7 @@ LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
 async def get_token(
     room:     str = Query(..., description="LiveKit room name"),
     identity: str = Query(..., description="Participant identity (e.g. user-abc123)"),
+    mode:     str = Query(default="rag", description="Session mode: rag|booking"),
 ):
     """
     Generate a short-lived LiveKit access token for a participant.
@@ -39,10 +41,15 @@ async def get_token(
             detail="LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set in .env"
         )
 
+    mode_norm = (mode or "rag").strip().lower()
+    if mode_norm not in ("rag", "booking"):
+        raise HTTPException(status_code=422, detail="mode must be 'rag' or 'booking'")
+
     token = (
         AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
         .with_identity(identity)
         .with_name(identity)
+        .with_metadata(json.dumps({"mode": mode_norm}))
         .with_grants(VideoGrants(
             room_join=True,
             room=room,
