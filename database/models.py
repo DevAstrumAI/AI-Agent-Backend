@@ -74,7 +74,8 @@ async def init_db():
             "  service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,"
             "  slot_date  TEXT NOT NULL,"
             "  slot_time  TEXT NOT NULL,"
-            "  available  INTEGER DEFAULT 1"
+            "  available  INTEGER DEFAULT 1,"
+            "  UNIQUE (doctor_id, service_id, slot_date, slot_time)"
             ")"
         )
         await conn.execute(
@@ -96,10 +97,23 @@ async def init_db():
             ")"
         )
 
-        # Migration: add department column if it doesn't exist yet
+        # Migrations
         await conn.execute(
             "ALTER TABLE doctors ADD COLUMN IF NOT EXISTS department TEXT DEFAULT ''"
         )
+        # Unique constraint on slots
+        await conn.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'slots_unique_booking'
+                ) THEN
+                    ALTER TABLE slots ADD CONSTRAINT slots_unique_booking
+                    UNIQUE (doctor_id, service_id, slot_date, slot_time);
+                END IF;
+            END$$;
+        """)
 
     print("✅ PostgreSQL database ready")
 
@@ -189,53 +203,30 @@ async def get_services_filtered(
     duration:  int | None = None,
     active:    int | None = None,
 ) -> list[dict]:
-    """
-    Filter services by name search, assigned doctor, duration, and active status.
-    All filters are optional and combinable.
-    """
     conditions = []
     params     = []
     i          = 1
 
-    # Name search (case-insensitive partial match)
     if search:
         conditions.append(f"LOWER(s.name) LIKE LOWER(${i})")
-        params.append(f"%{search}%")
-        i += 1
-
-    # Duration exact match
+        params.append(f"%{search}%"); i += 1
     if duration is not None:
         conditions.append(f"s.duration_minutes = ${i}")
-        params.append(duration)
-        i += 1
-
-    # Active status
+        params.append(duration); i += 1
     if active is not None:
         conditions.append(f"s.active = ${i}")
-        params.append(active)
-        i += 1
-
-    # Doctor filter using EXISTS subquery
+        params.append(active); i += 1
     if doctor_id:
         conditions.append(
-            f"EXISTS ("
-            f"  SELECT 1 FROM doctor_services ds"
-            f"  WHERE ds.service_id = s.id AND ds.doctor_id = ${i}"
-            f")"
+            f"EXISTS (SELECT 1 FROM doctor_services ds"
+            f" WHERE ds.service_id = s.id AND ds.doctor_id = ${i})"
         )
-        params.append(doctor_id)
-        i += 1
+        params.append(doctor_id); i += 1
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-
     pool = await get_pool()
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            f"SELECT * FROM services s"
-            f" {where}"
-            f" ORDER BY s.name",
-            *params,
-        )
+        rows = await conn.fetch(f"SELECT * FROM services s {where} ORDER BY s.name", *params)
         return [dict(r) for r in rows]
 
 
@@ -312,8 +303,7 @@ async def get_services_for_doctor(doctor_id: str) -> list[dict]:
         rows = await conn.fetch(
             "SELECT s.* FROM services s"
             " JOIN doctor_services ds ON ds.service_id = s.id"
-            " WHERE ds.doctor_id = $1"
-            " ORDER BY s.name",
+            " WHERE ds.doctor_id = $1 ORDER BY s.name",
             doctor_id,
         )
         return [dict(r) for r in rows]
@@ -361,49 +351,30 @@ async def get_doctors_filtered(
     service_id: str | None = None,
     active:     int | None = None,
 ) -> list[dict]:
-    """
-    Filter doctors by name search, department, assigned service, and active status.
-    All filters are optional and combinable.
-    """
     conditions = []
     params     = []
     i          = 1
 
     if search:
         conditions.append(f"LOWER(d.full_name) LIKE LOWER(${i})")
-        params.append(f"%{search}%")
-        i += 1
-
+        params.append(f"%{search}%"); i += 1
     if department:
         conditions.append(f"LOWER(d.department) = LOWER(${i})")
-        params.append(department)
-        i += 1
-
+        params.append(department); i += 1
     if active is not None:
         conditions.append(f"d.active = ${i}")
-        params.append(active)
-        i += 1
-
+        params.append(active); i += 1
     if service_id:
         conditions.append(
-            f"EXISTS ("
-            f"  SELECT 1 FROM doctor_services ds"
-            f"  WHERE ds.doctor_id = d.id AND ds.service_id = ${i}"
-            f")"
+            f"EXISTS (SELECT 1 FROM doctor_services ds"
+            f" WHERE ds.doctor_id = d.id AND ds.service_id = ${i})"
         )
-        params.append(service_id)
-        i += 1
+        params.append(service_id); i += 1
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-
     pool = await get_pool()
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            f"SELECT * FROM doctors d"
-            f" {where}"
-            f" ORDER BY d.full_name",
-            *params,
-        )
+        rows = await conn.fetch(f"SELECT * FROM doctors d {where} ORDER BY d.full_name", *params)
         return [dict(r) for r in rows]
 
 
@@ -412,9 +383,13 @@ async def get_doctors_filtered(
 # ─────────────────────────────────────────────────────────────
 
 async def get_all_slots(
-    doctor_id: str = None,
-    service_id: str = None,
-    available_only: bool = False,
+    doctor_id:      str  | None = None,
+    service_id:     str  | None = None,
+    available_only: bool        = False,
+    date_from:      str  | None = None,
+    date_to:        str  | None = None,
+    time_from:      str  | None = None,
+    time_to:        str  | None = None,
 ) -> list[dict]:
     conditions = []
     params     = []
@@ -426,9 +401,16 @@ async def get_all_slots(
         conditions.append(f"sl.service_id=${i}"); params.append(service_id); i += 1
     if available_only:
         conditions.append("sl.available=1")
+    if date_from:
+        conditions.append(f"sl.slot_date >= ${i}"); params.append(date_from); i += 1
+    if date_to:
+        conditions.append(f"sl.slot_date <= ${i}"); params.append(date_to); i += 1
+    if time_from:
+        conditions.append(f"sl.slot_time >= ${i}"); params.append(time_from); i += 1
+    if time_to:
+        conditions.append(f"sl.slot_time <= ${i}"); params.append(time_to); i += 1
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -454,11 +436,16 @@ async def create_slot(doctor_id: str, service_id: str, slot_date: str, slot_time
     sid  = str(uuid.uuid4())
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO slots (id, doctor_id, service_id, slot_date, slot_time)"
-            " VALUES ($1,$2,$3,$4,$5)",
-            sid, doctor_id, service_id, slot_date, slot_time,
-        )
+        try:
+            await conn.execute(
+                "INSERT INTO slots (id, doctor_id, service_id, slot_date, slot_time)"
+                " VALUES ($1,$2,$3,$4,$5)",
+                sid, doctor_id, service_id, slot_date, slot_time,
+            )
+        except asyncpg.UniqueViolationError:
+            raise ValueError(
+                f"A slot already exists for this doctor on {slot_date} at {slot_time}"
+            )
     return await get_slot_by_id(sid)
 
 
@@ -472,10 +459,15 @@ async def update_slot(slot_id: str, **fields) -> dict | None:
     values     = list(updates.values()) + [slot_id]
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute(
-            f"UPDATE slots SET {set_clause} WHERE id=${len(values)}",
-            *values,
-        )
+        try:
+            await conn.execute(
+                f"UPDATE slots SET {set_clause} WHERE id=${len(values)}",
+                *values,
+            )
+        except asyncpg.UniqueViolationError:
+            raise ValueError(
+                "A slot already exists for this doctor at the new date/time"
+            )
     return await get_slot_by_id(slot_id)
 
 
@@ -526,6 +518,75 @@ async def get_all_bookings(status: str = None) -> list[dict]:
             )
         else:
             rows = await conn.fetch("SELECT * FROM bookings ORDER BY booked_at DESC")
+        return [dict(r) for r in rows]
+
+
+async def get_bookings_filtered(
+    status:       str | None = None,
+    doctor_name:  str | None = None,
+    service_name: str | None = None,
+    date_from:    str | None = None,
+    date_to:      str | None = None,
+    time_from:    str | None = None,
+    time_to:      str | None = None,
+    search:       str | None = None,
+) -> list[dict]:
+    """
+    Filter bookings by status, doctor, service, date range, time range,
+    and a general search on patient name / confirmation number.
+    All filters are optional and combinable.
+    """
+    conditions = []
+    params     = []
+    i          = 1
+
+    # Status
+    if status:
+        conditions.append(f"status = ${i}")
+        params.append(status); i += 1
+
+    # Doctor name (partial, case-insensitive)
+    if doctor_name:
+        conditions.append(f"LOWER(doctor_name) LIKE LOWER(${i})")
+        params.append(f"%{doctor_name}%"); i += 1
+
+    # Service name (partial, case-insensitive)
+    if service_name:
+        conditions.append(f"LOWER(service_name) LIKE LOWER(${i})")
+        params.append(f"%{service_name}%"); i += 1
+
+    # Date range
+    if date_from:
+        conditions.append(f"slot_date >= ${i}")
+        params.append(date_from); i += 1
+    if date_to:
+        conditions.append(f"slot_date <= ${i}")
+        params.append(date_to); i += 1
+
+    # Time range
+    if time_from:
+        conditions.append(f"slot_time >= ${i}")
+        params.append(time_from); i += 1
+    if time_to:
+        conditions.append(f"slot_time <= ${i}")
+        params.append(time_to); i += 1
+
+    # General search: patient name OR confirmation number
+    if search:
+        conditions.append(
+            f"(LOWER(patient_name) LIKE LOWER(${i})"
+            f" OR LOWER(confirmation_number) LIKE LOWER(${i}))"
+        )
+        params.append(f"%{search}%"); i += 1
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            f"SELECT * FROM bookings {where} ORDER BY booked_at DESC",
+            *params,
+        )
         return [dict(r) for r in rows]
 
 

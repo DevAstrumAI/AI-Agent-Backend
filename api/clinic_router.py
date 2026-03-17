@@ -84,10 +84,6 @@ async def list_services(
     duration:  Optional[int] = Query(default=None, description="Filter by exact duration in minutes"),
     active:    Optional[int] = Query(default=None, description="Filter by status: 1=active, 0=inactive"),
 ):
-    """
-    List services with optional filters.
-    All params are optional and combinable.
-    """
     if any(v is not None for v in [search, doctor_id, duration, active]):
         services = await get_services_filtered(
             search    = search,
@@ -155,12 +151,6 @@ async def list_doctors(
     service_id: Optional[str] = Query(default=None, description="Filter by service UUID"),
     active:     Optional[int] = Query(default=None, description="Filter by status: 1=active, 0=inactive"),
 ):
-    """
-    List doctors with optional filters.
-
-    Agent use:  ?service=IV Therapy  → doctors for a specific service name
-    Admin use:  ?search=John&department=Cardiology&service_id=xxx&active=1
-    """
     if service:
         doctors = await get_doctors_for_service_db(service)
         return {
@@ -247,13 +237,18 @@ async def unassign_doctor_service(doctor_id: str, service_id: str):
 
 @router.get("/slots")
 async def list_slots(
-    service:        Optional[str] = Query(default=None),
-    doctor:         Optional[str] = Query(default=None),
-    doctor_id:      Optional[str] = Query(default=None),
-    service_id:     Optional[str] = Query(default=None),
-    available_only: bool          = Query(default=False),
+    service:        Optional[str] = Query(default=None, description="Service name (agent use)"),
+    doctor:         Optional[str] = Query(default=None, description="Doctor name (agent use)"),
+    doctor_id:      Optional[str] = Query(default=None, description="Filter by doctor UUID"),
+    service_id:     Optional[str] = Query(default=None, description="Filter by service UUID"),
+    available_only: bool          = Query(default=False, description="Only available slots"),
+    date_from:      Optional[str] = Query(default=None, description="Start date filter YYYY-MM-DD"),
+    date_to:        Optional[str] = Query(default=None, description="End date filter YYYY-MM-DD"),
+    time_from:      Optional[str] = Query(default=None, description="Start time filter HH:MM"),
+    time_to:        Optional[str] = Query(default=None, description="End time filter HH:MM"),
     limit:          int           = Query(default=6, ge=1, le=100),
 ):
+    # Agent path — filter by service and doctor names
     if service and doctor:
         slots = await get_available_slots(
             service_name = service,
@@ -267,10 +262,15 @@ async def list_slots(
                   for i, s in enumerate(slots, 1)]
         return {"slots": slots, "spoken_options": spoken, "count": len(slots)}
 
+    # Admin path — full filtering including date and time range
     slots = await get_all_slots(
         doctor_id      = doctor_id,
         service_id     = service_id,
         available_only = available_only,
+        date_from      = date_from,
+        date_to        = date_to,
+        time_from      = time_from,
+        time_to        = time_to,
     )
     return {"slots": slots, "count": len(slots)}
 

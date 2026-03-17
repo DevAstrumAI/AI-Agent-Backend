@@ -1,23 +1,24 @@
 """
 RAG Backend — api/bookings_router.py
 ========================================
-Full CRUD for bookings.
+Full CRUD for bookings with advanced filtering.
 
 POST   /bookings/              — create booking (called by agent)
-GET    /bookings/              — list all bookings (optional ?status=confirmed)
+GET    /bookings/              — list all bookings with optional filters
 GET    /bookings/{id}          — get single booking by ID or confirmation number
-PATCH  /bookings/{id}          — update booking fields (status, patient_name, etc.)
+PATCH  /bookings/{id}          — update booking fields
 DELETE /bookings/{id}          — hard delete booking
 POST   /bookings/{id}/cancel   — soft cancel (sets status=cancelled)
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 
 from database.models import (
     save_booking,
     get_all_bookings,
+    get_bookings_filtered,
     get_booking_by_id,
     update_booking,
     delete_booking,
@@ -39,7 +40,7 @@ class BookingCreate(BaseModel):
 
 
 class BookingUpdate(BaseModel):
-    status:          Optional[str] = None   # confirmed | cancelled | no_show
+    status:          Optional[str] = None
     patient_name:    Optional[str] = None
     language:        Optional[str] = None
     session_summary: Optional[str] = None
@@ -51,10 +52,6 @@ class BookingUpdate(BaseModel):
 
 @router.post("/", status_code=201)
 async def create_booking(payload: BookingCreate):
-    """
-    Save a confirmed booking. Called by the agent after user says YES.
-    Marks the slot unavailable if slot_id is provided.
-    """
     try:
         record = await save_booking(
             service_name    = payload.service_name,
@@ -70,21 +67,44 @@ async def create_booking(payload: BookingCreate):
 
 
 @router.get("/")
-async def list_bookings(status: Optional[str] = None):
+async def list_bookings(
+    status:       Optional[str] = Query(default=None, description="Filter by status: confirmed|cancelled|no_show"),
+    doctor_name:  Optional[str] = Query(default=None, description="Filter by doctor name (partial, case-insensitive)"),
+    service_name: Optional[str] = Query(default=None, description="Filter by service name (partial, case-insensitive)"),
+    date_from:    Optional[str] = Query(default=None, description="Filter from date YYYY-MM-DD"),
+    date_to:      Optional[str] = Query(default=None, description="Filter to date YYYY-MM-DD"),
+    time_from:    Optional[str] = Query(default=None, description="Filter from time HH:MM"),
+    time_to:      Optional[str] = Query(default=None, description="Filter to time HH:MM"),
+    search:       Optional[str] = Query(default=None, description="Search patient name or confirmation number"),
+):
     """
-    List all bookings. Filter by ?status=confirmed|cancelled|no_show
+    List bookings with optional filters.
+    All params are optional and combinable.
     """
-    bookings = await get_all_bookings(status=status)
+    has_filters = any(v is not None for v in [
+        status, doctor_name, service_name,
+        date_from, date_to, time_from, time_to, search
+    ])
+
+    if has_filters:
+        bookings = await get_bookings_filtered(
+            status       = status,
+            doctor_name  = doctor_name,
+            service_name = service_name,
+            date_from    = date_from,
+            date_to      = date_to,
+            time_from    = time_from,
+            time_to      = time_to,
+            search       = search,
+        )
+    else:
+        bookings = await get_all_bookings()
+
     return {"bookings": bookings, "count": len(bookings)}
 
 
 @router.get("/{booking_id}")
 async def get_booking(booking_id: str):
-    """
-    Get a single booking.
-    booking_id can be an integer ID (e.g. 1, 2, 3)
-    or a confirmation number (e.g. FM-2026-AB1234).
-    """
     booking = await get_booking_by_id(booking_id)
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -93,9 +113,6 @@ async def get_booking(booking_id: str):
 
 @router.patch("/{booking_id}")
 async def patch_booking(booking_id: str, payload: BookingUpdate):
-    """
-    Update booking fields. booking_id accepts integer or confirmation number.
-    """
     booking = await get_booking_by_id(booking_id)
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -105,7 +122,6 @@ async def patch_booking(booking_id: str, payload: BookingUpdate):
 
 @router.post("/{booking_id}/cancel")
 async def cancel_booking(booking_id: str):
-    """Soft cancel — sets status to 'cancelled'. booking_id accepts integer or confirmation number."""
     booking = await get_booking_by_id(booking_id)
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -115,7 +131,6 @@ async def cancel_booking(booking_id: str):
 
 @router.delete("/{booking_id}")
 async def delete_booking_endpoint(booking_id: str):
-    """Hard delete. booking_id accepts integer or confirmation number."""
     deleted = await delete_booking(booking_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Booking not found")
