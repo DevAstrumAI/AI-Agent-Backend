@@ -11,6 +11,7 @@ PostgreSQL schema + full CRUD for:
 
 import asyncpg
 import os
+import re
 import uuid
 from datetime import datetime
 
@@ -130,6 +131,24 @@ async def close_db():
 
 
 # ─────────────────────────────────────────────────────────────
+# Name helpers
+# ─────────────────────────────────────────────────────────────
+
+_TITLE_PREFIX = re.compile(
+    r"^\s*(dr\.?|prof\.?|mr\.?|mrs\.?|ms\.?|dipl\.?[-\s]?\w*\.?)\s+",
+    re.IGNORECASE,
+)
+
+
+def _strip_title(name: str) -> str:
+    """
+    Remove honorific prefix so names like 'Dr. Hina Aslam' match the DB
+    column value 'Hina Aslam'.  Safe to call on already-bare names.
+    """
+    return _TITLE_PREFIX.sub("", (name or "")).strip()
+
+
+# ─────────────────────────────────────────────────────────────
 # Helper
 # ─────────────────────────────────────────────────────────────
 
@@ -158,10 +177,16 @@ async def get_service_by_id(service_id: str) -> dict | None:
 
 
 async def get_service_by_name(name: str) -> dict | None:
+    """
+    Exact-match lookup (case-insensitive, whitespace-trimmed).
+    Services are not prefixed with titles so exact match is fine here.
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT * FROM services WHERE LOWER(name)=LOWER($1) AND active=1", name
+            "SELECT * FROM services"
+            " WHERE LOWER(BTRIM(name)) = LOWER(BTRIM($1)) AND active=1",
+            name,
         )
         return dict(row) if row else None
 
@@ -253,10 +278,34 @@ async def get_doctor_by_id(doctor_id: str) -> dict | None:
 
 
 async def get_doctor_by_name(name: str) -> dict | None:
+    """
+    Look up a doctor by name.
+
+    Strategy (most-specific to least):
+      1. Exact match on the bare name (title stripped).
+      2. ILIKE partial match as a fallback so minor spacing/prefix
+         differences don't silently produce a NULL doctor_id on bookings.
+    """
+    bare = _strip_title(name)
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # 1. Exact match (preferred — avoids ambiguity when multiple doctors
+        #    share a partial name, e.g. "Ali" matching "Dr. Ali Khan" AND
+        #    "Dr. Zainab Ali").
         row = await conn.fetchrow(
-            "SELECT * FROM doctors WHERE LOWER(full_name)=LOWER($1) AND active=1", name
+            "SELECT * FROM doctors"
+            " WHERE LOWER(BTRIM(full_name)) = LOWER(BTRIM($1)) AND active=1",
+            bare,
+        )
+        if row:
+            return dict(row)
+
+        # 2. Partial ILIKE fallback — catches residual prefix/suffix noise.
+        row = await conn.fetchrow(
+            "SELECT * FROM doctors"
+            " WHERE full_name ILIKE $1 AND active=1"
+            " ORDER BY full_name LIMIT 1",
+            f"%{bare}%",
         )
         return dict(row) if row else None
 
@@ -485,8 +534,7 @@ async def delete_slot(slot_id: str) -> bool:
 async def mark_slot_unavailable(slot_id: str, conn: asyncpg.Connection | None = None) -> bool:
     """
     Mark a slot as unavailable (available=0).
-
-    Returns True if we successfully changed it from available->unavailable.
+    Returns True if we successfully changed it from available → unavailable.
     Returns False if slot doesn't exist or was already unavailable.
     """
     pool = await get_pool()
@@ -499,7 +547,6 @@ async def mark_slot_unavailable(slot_id: str, conn: asyncpg.Connection | None = 
         " WHERE id=$1 AND COALESCE(available, 1)=1",
         slot_id,
     )
-    # asyncpg returns strings like "UPDATE 1"
     try:
         changed = int(result.split()[-1])
     except Exception:
@@ -507,24 +554,55 @@ async def mark_slot_unavailable(slot_id: str, conn: asyncpg.Connection | None = 
     return changed == 1
 
 
-async def get_available_slots(service_name: str, doctor_name: str, limit: int = 6) -> list[dict]:
-    today = datetime.now().date().strftime("%Y-%m-%d")
-    pool  = await get_pool()
+async def get_available_slots(
+    service_name: str,
+    doctor_name: str,
+    limit: int = 6,
+) -> list[dict]:
+    """
+    Return upcoming available slots for a given doctor and service.
+
+    Matching strategy (most-specific to least):
+      1. Exact match on stripped bare name  → no ambiguity risk.
+      2. ILIKE partial match as fallback    → catches any residual
+         prefix/suffix noise ("Dr." etc.) that slipped past the
+         client/router stripping layers.
+    """
+    bare_name = _strip_title(doctor_name)
+    today     = datetime.now().date().strftime("%Y-%m-%d")
+    pool      = await get_pool()
+
+    base_select = (
+        "SELECT sl.id, sl.slot_date, sl.slot_time,"
+        "       d.full_name AS doctor_name, s.name AS service_name,"
+        "       s.duration_minutes"
+        " FROM slots sl"
+        " JOIN doctors d ON d.id = sl.doctor_id"
+        " JOIN services s ON s.id = sl.service_id"
+        " WHERE COALESCE(sl.available, 1) = 1"
+        "   AND sl.slot_date >= $3"
+        "   AND LOWER(BTRIM(s.name)) = LOWER(BTRIM($2))"
+    )
+
     async with pool.acquire() as conn:
+        # 1. Exact match on bare name
         rows = await conn.fetch(
-            "SELECT sl.id, sl.slot_date, sl.slot_time,"
-            "       d.full_name AS doctor_name, s.name AS service_name, s.duration_minutes"
-            " FROM slots sl"
-            " JOIN doctors d ON d.id = sl.doctor_id"
-            " JOIN services s ON s.id = sl.service_id"
-            " WHERE LOWER(BTRIM(d.full_name)) = LOWER(BTRIM($1))"
-            "   AND LOWER(BTRIM(s.name))      = LOWER(BTRIM($2))"
-            "   AND COALESCE(sl.available, 1) = 1"
-            "   AND sl.slot_date       >= $3"
-            " ORDER BY sl.slot_date, sl.slot_time"
-            " LIMIT $4",
-            doctor_name, service_name, today, limit,
+            base_select
+            + "   AND LOWER(BTRIM(d.full_name)) = LOWER(BTRIM($1))"
+              " ORDER BY sl.slot_date, sl.slot_time LIMIT $4",
+            bare_name, service_name, today, limit,
         )
+
+        if not rows:
+            # 2. ILIKE partial fallback — handles edge-cases where the DB
+            #    value has extra whitespace or a Unicode variant of the name.
+            rows = await conn.fetch(
+                base_select
+                + "   AND d.full_name ILIKE $1"
+                  " ORDER BY sl.slot_date, sl.slot_time LIMIT $4",
+                f"%{bare_name}%", service_name, today, limit,
+            )
+
         return [dict(r) for r in rows]
 
 
@@ -554,47 +632,31 @@ async def get_bookings_filtered(
     time_to:      str | None = None,
     search:       str | None = None,
 ) -> list[dict]:
-    """
-    Filter bookings by status, doctor, service, date range, time range,
-    and a general search on patient name / confirmation number.
-    All filters are optional and combinable.
-    """
     conditions = []
     params     = []
     i          = 1
 
-    # Status
     if status:
         conditions.append(f"status = ${i}")
         params.append(status); i += 1
-
-    # Doctor name (partial, case-insensitive)
     if doctor_name:
         conditions.append(f"LOWER(doctor_name) LIKE LOWER(${i})")
         params.append(f"%{doctor_name}%"); i += 1
-
-    # Service name (partial, case-insensitive)
     if service_name:
         conditions.append(f"LOWER(service_name) LIKE LOWER(${i})")
         params.append(f"%{service_name}%"); i += 1
-
-    # Date range
     if date_from:
         conditions.append(f"slot_date >= ${i}")
         params.append(date_from); i += 1
     if date_to:
         conditions.append(f"slot_date <= ${i}")
         params.append(date_to); i += 1
-
-    # Time range
     if time_from:
         conditions.append(f"slot_time >= ${i}")
         params.append(time_from); i += 1
     if time_to:
         conditions.append(f"slot_time <= ${i}")
         params.append(time_to); i += 1
-
-    # General search: patient name OR confirmation number
     if search:
         conditions.append(
             f"(LOWER(patient_name) LIKE LOWER(${i})"
@@ -603,7 +665,6 @@ async def get_bookings_filtered(
         params.append(f"%{search}%"); i += 1
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -636,10 +697,20 @@ async def save_booking(
 ) -> dict:
     confirmation = _generate_confirmation()
 
+    # Strip title before resolving IDs — DB stores bare names.
+    bare_doctor = _strip_title(doctor_name)
+
     service    = await get_service_by_name(service_name)
-    doctor     = await get_doctor_by_name(doctor_name)
+    doctor     = await get_doctor_by_name(bare_doctor)
     service_id = service["id"] if service else None
     doctor_id  = doctor["id"]  if doctor  else None
+
+    if not doctor_id:
+        import logging
+        logging.getLogger(__name__).warning(
+            "[save_booking] Could not resolve doctor_id for name=%r (bare=%r)",
+            doctor_name, bare_doctor,
+        )
 
     slot_date = None
     slot_time = None
@@ -647,7 +718,6 @@ async def save_booking(
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
-            # If a slot_id was provided, lock the slot row and consume it.
             if slot_id:
                 slot = await conn.fetchrow(
                     "SELECT id, slot_date, slot_time, available"
@@ -663,8 +733,9 @@ async def save_booking(
 
                     consumed = await mark_slot_unavailable(slot_id, conn=conn)
                     if not consumed:
-                        # Slot exists but is already booked/closed.
-                        raise ValueError("Selected slot is no longer available. Please choose another slot.")
+                        raise ValueError(
+                            "Selected slot is no longer available. Please choose another slot."
+                        )
 
             row = await conn.fetchrow(
                 "INSERT INTO bookings"
@@ -674,7 +745,7 @@ async def save_booking(
                 " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
                 " RETURNING id",
                 confirmation, slot_id, service_id, doctor_id,
-                service_name, doctor_name, patient_name,
+                service_name, bare_doctor, patient_name,
                 slot_date, slot_time, language, session_summary,
             )
             new_id = row["id"] if row else None
@@ -683,7 +754,7 @@ async def save_booking(
         "id":                  new_id,
         "confirmation_number": confirmation,
         "service_name":        service_name,
-        "doctor_name":         doctor_name,
+        "doctor_name":         bare_doctor,
         "patient_name":        patient_name,
         "slot_date":           slot_date,
         "slot_time":           slot_time,
@@ -716,24 +787,19 @@ async def update_booking(booking_id: int | str, **fields) -> dict | None:
 
 
 async def delete_booking(booking_id: int | str) -> bool:
-    """
-    Hard delete a booking. If the booking referenced a slot, attempt to reopen it
-    (available=1) so it becomes bookable again.
-
-    Note: we only reopen the slot if there are no other *confirmed* bookings
-    referencing the same slot_id.
-    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
-            # Fetch booking (to get slot_id) and delete it
             if isinstance(booking_id, int):
-                booking = await conn.fetchrow("SELECT id, slot_id FROM bookings WHERE id=$1", booking_id)
+                booking = await conn.fetchrow(
+                    "SELECT id, slot_id FROM bookings WHERE id=$1", booking_id
+                )
             else:
-                # Could be numeric string or confirmation number
                 try:
-                    int_id = int(booking_id)
-                    booking = await conn.fetchrow("SELECT id, slot_id FROM bookings WHERE id=$1", int_id)
+                    int_id  = int(booking_id)
+                    booking = await conn.fetchrow(
+                        "SELECT id, slot_id FROM bookings WHERE id=$1", int_id
+                    )
                 except (ValueError, TypeError):
                     booking = await conn.fetchrow(
                         "SELECT id, slot_id FROM bookings WHERE confirmation_number=$1",
@@ -750,12 +816,8 @@ async def delete_booking(booking_id: int | str) -> bool:
                 return False
 
             if slot_id:
-                # If no other booking references this slot, delete the slot too.
                 still_referenced = await conn.fetchval(
-                    "SELECT EXISTS("
-                    "  SELECT 1 FROM bookings"
-                    "  WHERE slot_id=$1"
-                    ")",
+                    "SELECT EXISTS(SELECT 1 FROM bookings WHERE slot_id=$1)",
                     slot_id,
                 )
                 if not still_referenced:
@@ -765,10 +827,6 @@ async def delete_booking(booking_id: int | str) -> bool:
 
 
 async def cancel_booking_db(booking_id: int | str) -> dict | None:
-    """
-    Soft-cancel a booking (status=cancelled). If it referenced a slot, reopen it
-    unless another confirmed booking still references the same slot_id.
-    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
