@@ -52,6 +52,10 @@ class BookingUpdate(BaseModel):
 
 @router.post("/", status_code=201)
 async def create_booking(payload: BookingCreate):
+    import time
+    import logging
+    log = logging.getLogger(__name__)
+    t0 = time.perf_counter()
     try:
         record = await save_booking(
             service_name    = payload.service_name,
@@ -61,6 +65,10 @@ async def create_booking(payload: BookingCreate):
             language        = payload.language,
             session_summary = payload.session_summary,
         )
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        msg = f"[HTTP][bookings] POST /bookings/ completed in {dt_ms:.1f}ms"
+        print(msg, flush=True)
+        log.info(msg)
         return {"success": True, "booking": record}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

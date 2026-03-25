@@ -8,6 +8,10 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+import os
+import threading
+import logging
+import time
 
 from database.models import (
     get_all_services, get_service_by_id, create_service, update_service, delete_service,
@@ -20,6 +24,43 @@ from database.models import (
 )
 
 router = APIRouter(prefix="/clinic", tags=["Clinic"])
+log = logging.getLogger(__name__)
+
+# In-memory TTL caches for the agent/booking read-path.
+# These endpoints are hit frequently by new LiveKit workers, so caching them
+# eliminates repeated DB latency.
+_SERVICES_CACHE_TTL_S = float(os.getenv("CLINIC_SERVICES_CACHE_TTL_S", "60"))
+_DOCTORS_CACHE_TTL_S  = float(os.getenv("CLINIC_DOCTORS_CACHE_TTL_S", "60"))
+_DOCTOR_SERVICES_CACHE_TTL_S = float(os.getenv("CLINIC_DOCTOR_SERVICES_CACHE_TTL_S", "60"))
+_DOCTORS_ALL_CACHE_TTL_S = float(os.getenv("CLINIC_DOCTORS_ALL_CACHE_TTL_S", "60"))
+
+_services_cache: dict[str, object] = {"value": None, "expires_at": 0.0}
+_doctors_cache: dict[str, dict[str, object]] = {}
+_doctor_services_cache: dict[str, dict[str, object]] = {}
+_doctors_all_cache: dict[str, object] = {"value": None, "expires_at": 0.0}
+_cache_lock = threading.Lock()
+
+
+def _cache_get(entry: dict[str, object]) -> object | None:
+    expires_at = float(entry.get("expires_at") or 0.0)
+    if time.monotonic() < expires_at:
+        return entry.get("value")
+    return None
+
+
+def _cache_set(entry: dict[str, object], value: object, ttl_s: float) -> None:
+    entry["value"] = value
+    entry["expires_at"] = time.monotonic() + ttl_s
+
+
+def _invalidate_clinic_caches() -> None:
+    with _cache_lock:
+        _services_cache["value"] = None
+        _services_cache["expires_at"] = 0.0
+        _doctors_cache.clear()
+        _doctor_services_cache.clear()
+        _doctors_all_cache["value"] = None
+        _doctors_all_cache["expires_at"] = 0.0
 
 
 # ─────────────────────────────────────────────────────────────
@@ -92,7 +133,15 @@ async def list_services(
             active    = active,
         )
     else:
-        services = await get_all_services()
+        # Cache only the unfiltered "agent booking" request.
+        with _cache_lock:
+            cached = _cache_get(_services_cache)
+        if cached is None:
+            services = await get_all_services()
+            with _cache_lock:
+                _cache_set(_services_cache, services, _SERVICES_CACHE_TTL_S)
+        else:
+            services = cached  # type: ignore[assignment]
 
     return {
         "services": services,
@@ -109,6 +158,7 @@ async def add_service(payload: ServiceCreate):
             description      = payload.description or "",
             duration_minutes = payload.duration_minutes or 60,
         )
+        _invalidate_clinic_caches()
         return {"success": True, "service": service}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -128,6 +178,7 @@ async def patch_service(service_id: str, payload: ServiceUpdate):
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
     updated = await update_service(service_id, **payload.model_dump(exclude_none=True))
+    _invalidate_clinic_caches()
     return {"success": True, "service": updated}
 
 
@@ -136,6 +187,7 @@ async def remove_service(service_id: str):
     deleted = await delete_service(service_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Service not found")
+    _invalidate_clinic_caches()
     return {"success": True, "deleted_id": service_id}
 
 
@@ -152,18 +204,58 @@ async def list_doctors(
     active:     Optional[int] = Query(default=None, description="Filter by status: 1=active, 0=inactive"),
 ):
     if service:
-        doctors = await get_doctors_for_service_db(service)
+        key = (service or "").strip()
+        with _cache_lock:
+            entry = _doctors_cache.get(key)
+            cached = _cache_get(entry) if entry else None
+        if cached is None:
+            t0 = time.perf_counter()
+            doctors = await get_doctors_for_service_db(service)
+            dt_ms = (time.perf_counter() - t0) * 1000.0
+            with _cache_lock:
+                _doctors_cache[key] = {"value": doctors, "expires_at": time.monotonic() + _DOCTORS_CACHE_TTL_S}
+        else:
+            doctors = cached  # type: ignore[assignment]
+            dt_ms = -1.0
+        if dt_ms >= 0:
+            msg = f"[HTTP][clinic][doctors] service={service!r} returned={len(doctors)} in {dt_ms:.1f}ms"
+        else:
+            msg = f"[HTTP][clinic][doctors] service={service!r} returned={len(doctors)} (cache hit)"
+        print(msg, flush=True)
+        log.info(msg)
         return {
             "doctors": doctors,
             "names":   [d["full_name"] for d in doctors],
             "count":   len(doctors),
         }
 
+    # Cache unfiltered GET /clinic/doctors (admin dashboard calls this a lot).
+    if search is None and department is None and service_id is None and active is None:
+        with _cache_lock:
+            cached = _cache_get(_doctors_all_cache)
+        if cached is None:
+            t0 = time.perf_counter()
+            doctors = await get_doctors_filtered(
+                search=search,
+                department=department,
+                service_id=service_id,
+                active=active,
+            )
+            dt_ms = (time.perf_counter() - t0) * 1000.0
+            with _cache_lock:
+                _doctors_all_cache["value"] = doctors
+                _doctors_all_cache["expires_at"] = time.monotonic() + _DOCTORS_ALL_CACHE_TTL_S
+            print(f"[HTTP][clinic][doctors] all returned={len(doctors)} in {dt_ms:.1f}ms", flush=True)
+        else:
+            doctors = cached  # type: ignore[assignment]
+            print(f"[HTTP][clinic][doctors] all returned={len(doctors)} (cache hit)", flush=True)
+        return {"doctors": doctors, "count": len(doctors)}
+
     doctors = await get_doctors_filtered(
-        search     = search,
-        department = department,
-        service_id = service_id,
-        active     = active,
+        search=search,
+        department=department,
+        service_id=service_id,
+        active=active,
     )
     return {"doctors": doctors, "count": len(doctors)}
 
@@ -177,6 +269,7 @@ async def add_doctor(payload: DoctorCreate):
             department = payload.department,
             bio        = payload.bio,
         )
+        _invalidate_clinic_caches()
         return {"success": True, "doctor": doctor}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -196,6 +289,7 @@ async def patch_doctor(doctor_id: str, payload: DoctorUpdate):
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
     updated = await update_doctor(doctor_id, **payload.model_dump(exclude_none=True))
+    _invalidate_clinic_caches()
     return {"success": True, "doctor": updated}
 
 
@@ -204,6 +298,7 @@ async def remove_doctor(doctor_id: str):
     deleted = await delete_doctor(doctor_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Doctor not found")
+    _invalidate_clinic_caches()
     return {"success": True, "deleted_id": doctor_id}
 
 
@@ -212,13 +307,26 @@ async def get_doctor_services(doctor_id: str):
     doctor = await get_doctor_by_id(doctor_id)
     if not doctor:
         raise HTTPException(status_code=404, detail="Doctor not found")
-    services = await get_services_for_doctor(doctor_id)
+    with _cache_lock:
+        entry = _doctor_services_cache.get(doctor_id)
+        cached = _cache_get(entry) if entry else None
+    if cached is None:
+        t0 = time.perf_counter()
+        services = await get_services_for_doctor(doctor_id)
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        with _cache_lock:
+            _doctor_services_cache[doctor_id] = {"value": services, "expires_at": time.monotonic() + _DOCTOR_SERVICES_CACHE_TTL_S}
+        print(f"[HTTP][clinic][doctor-services] doctor_id={doctor_id!r} returned={len(services)} in {dt_ms:.1f}ms", flush=True)
+    else:
+        services = cached  # type: ignore[assignment]
+        print(f"[HTTP][clinic][doctor-services] doctor_id={doctor_id!r} returned={len(services)} (cache hit)", flush=True)
     return {"doctor_id": doctor_id, "services": services, "count": len(services)}
 
 
 @router.post("/doctors/{doctor_id}/services", status_code=201)
 async def assign_doctor_service(doctor_id: str, payload: AssignService):
     await assign_service_to_doctor(doctor_id, payload.service_id)
+    _invalidate_clinic_caches()
     services = await get_services_for_doctor(doctor_id)
     return {"success": True, "doctor_id": doctor_id, "services": services}
 
@@ -228,6 +336,7 @@ async def unassign_doctor_service(doctor_id: str, service_id: str):
     removed = await remove_service_from_doctor(doctor_id, service_id)
     if not removed:
         raise HTTPException(status_code=404, detail="Assignment not found")
+    _invalidate_clinic_caches()
     return {"success": True, "doctor_id": doctor_id, "removed_service_id": service_id}
 
 
@@ -250,11 +359,16 @@ async def list_slots(
 ):
     # Agent path — filter by service and doctor names
     if service and doctor:
+        t0 = time.perf_counter()
         slots = await get_available_slots(
             service_name = service,
             doctor_name  = doctor,
             limit        = limit,
         )
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        msg = f"[HTTP][clinic][slots] service={service!r} doctor={doctor!r} returned={len(slots)} in {dt_ms:.1f}ms"
+        print(msg, flush=True)
+        log.info(msg)
         if not slots:
             return {"slots": [], "spoken_options": [], "count": 0,
                     "message": f"No available slots for {doctor} — {service}"}

@@ -9,15 +9,20 @@ PostgreSQL schema + full CRUD for:
   - bookings
 """
 
+import asyncio
 import asyncpg
+import logging
 import os
 import re
+import time
 import uuid
 from datetime import datetime
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 _pool: asyncpg.Pool | None = None
+
+log = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -118,6 +123,48 @@ async def init_db():
                     UNIQUE (doctor_id, service_id, slot_date, slot_time);
                 END IF;
             END$$;
+        """)
+
+        # Performance indexes for agent lookups (name normalization + join keys).
+        # Note: these indexes are safe to re-run.
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_services_name_norm
+            ON services (LOWER(BTRIM(name)))
+            WHERE active=1;
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_services_name_norm_all
+            ON services (LOWER(BTRIM(name)));
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_doctors_fullname_norm
+            ON doctors (LOWER(BTRIM(full_name)))
+            WHERE active=1;
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_doctors_fullname_norm_all
+            ON doctors (LOWER(BTRIM(full_name)));
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_doctors_active_fullname
+            ON doctors (full_name)
+            WHERE active=1;
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_doctor_services_service_doctor
+            ON doctor_services (service_id, doctor_id);
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_slots_doctor_service_date_available
+            ON slots (doctor_id, service_id, slot_date, available);
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_slots_doctor_service_date_time_available
+            ON slots (doctor_id, service_id, slot_date, slot_time, available);
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_slots_slot_date
+            ON slots (slot_date);
         """)
 
     print("✅ PostgreSQL database ready")
@@ -386,6 +433,7 @@ async def remove_service_from_doctor(doctor_id: str, service_id: str) -> bool:
 async def get_doctors_for_service_db(service_name: str) -> list[dict]:
     pool = await get_pool()
     async with pool.acquire() as conn:
+        t0 = time.perf_counter()
         rows = await conn.fetch(
             "SELECT d.id, d.full_name, d.title, d.department, d.bio"
             " FROM doctors d"
@@ -395,6 +443,13 @@ async def get_doctors_for_service_db(service_name: str) -> list[dict]:
             " ORDER BY d.full_name",
             service_name,
         )
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        msg = (
+            f"[db][get_doctors_for_service_db] service={service_name!r} "
+            f"returned={len(rows)} in {dt_ms:.1f}ms"
+        )
+        print(msg, flush=True)
+        log.info(msg)
         return [dict(r) for r in rows]
 
 
@@ -544,7 +599,7 @@ async def mark_slot_unavailable(slot_id: str, conn: asyncpg.Connection | None = 
 
     result = await conn.execute(
         "UPDATE slots SET available=0"
-        " WHERE id=$1 AND COALESCE(available, 1)=1",
+        " WHERE id=$1 AND (available IS NULL OR available=1)",
         slot_id,
     )
     try:
@@ -579,29 +634,45 @@ async def get_available_slots(
         " FROM slots sl"
         " JOIN doctors d ON d.id = sl.doctor_id"
         " JOIN services s ON s.id = sl.service_id"
-        " WHERE COALESCE(sl.available, 1) = 1"
+        " WHERE (sl.available IS NULL OR sl.available=1)"
         "   AND sl.slot_date >= $3"
         "   AND LOWER(BTRIM(s.name)) = LOWER(BTRIM($2))"
     )
 
     async with pool.acquire() as conn:
         # 1. Exact match on bare name
+        t_exact0 = time.perf_counter()
         rows = await conn.fetch(
             base_select
             + "   AND LOWER(BTRIM(d.full_name)) = LOWER(BTRIM($1))"
               " ORDER BY sl.slot_date, sl.slot_time LIMIT $4",
             bare_name, service_name, today, limit,
         )
+        dt_exact_ms = (time.perf_counter() - t_exact0) * 1000.0
+        msg = (
+            f"[db][get_available_slots:exact] service={service_name!r} "
+            f"doctor_bare={bare_name!r} returned={len(rows)} in {dt_exact_ms:.1f}ms"
+        )
+        print(msg, flush=True)
+        log.info(msg)
 
         if not rows:
             # 2. ILIKE partial fallback — handles edge-cases where the DB
             #    value has extra whitespace or a Unicode variant of the name.
+            t_ilike0 = time.perf_counter()
             rows = await conn.fetch(
                 base_select
                 + "   AND d.full_name ILIKE $1"
                   " ORDER BY sl.slot_date, sl.slot_time LIMIT $4",
                 f"%{bare_name}%", service_name, today, limit,
             )
+            dt_ilike_ms = (time.perf_counter() - t_ilike0) * 1000.0
+            msg = (
+                f"[db][get_available_slots:ilike] service={service_name!r} "
+                f"doctor_bare={bare_name!r} returned={len(rows)} in {dt_ilike_ms:.1f}ms"
+            )
+            print(msg, flush=True)
+            log.info(msg)
 
         return [dict(r) for r in rows]
 
@@ -695,61 +766,119 @@ async def save_booking(
     language: str = "en",
     session_summary: str | None = None,
 ) -> dict:
+    t_total0 = time.perf_counter()
     confirmation = _generate_confirmation()
 
     # Strip title before resolving IDs — DB stores bare names.
     bare_doctor = _strip_title(doctor_name)
 
-    service    = await get_service_by_name(service_name)
-    doctor     = await get_doctor_by_name(bare_doctor)
-    service_id = service["id"] if service else None
-    doctor_id  = doctor["id"]  if doctor  else None
-
-    if not doctor_id:
-        import logging
-        logging.getLogger(__name__).warning(
-            "[save_booking] Could not resolve doctor_id for name=%r (bare=%r)",
-            doctor_name, bare_doctor,
-        )
-
+    # If slot_id is provided, derive doctor_id/service_id directly from the locked
+    # slot row. This avoids slow name-based lookups and is faster/consistent.
+    service_id: str | None = None
+    doctor_id: str | None = None
     slot_date = None
     slot_time = None
+    dt_resolve_ms = 0.0
+    new_id = None
 
     pool = await get_pool()
+    t_acquire0 = time.perf_counter()
     async with pool.acquire() as conn:
+        dt_acquire_ms = (time.perf_counter() - t_acquire0) * 1000.0
         async with conn.transaction():
+            t_tx0 = time.perf_counter()
+            dt_slot_ms = 0.0
+            dt_insert_ms = 0.0
             if slot_id:
-                slot = await conn.fetchrow(
-                    "SELECT id, slot_date, slot_time, available"
-                    " FROM slots WHERE id=$1 FOR UPDATE",
-                    slot_id,
+                # Consume slot + insert booking in ONE statement to avoid
+                # a second DB round-trip.
+                t_slot0 = time.perf_counter()
+                row = await conn.fetchrow(
+                    """
+                    WITH consumed AS (
+                      UPDATE slots
+                         SET available=0
+                       WHERE id=$1
+                         AND (available IS NULL OR available=1)
+                       RETURNING slot_date, slot_time, doctor_id, service_id
+                    )
+                    INSERT INTO bookings
+                      (confirmation_number, slot_id, service_id, doctor_id,
+                       service_name, doctor_name, patient_name,
+                       slot_date, slot_time, language, session_summary)
+                    SELECT
+                      $2, $1, c.service_id, c.doctor_id,
+                      $3, $4, $5,
+                      c.slot_date, c.slot_time, $6, $7
+                    FROM consumed c
+                    RETURNING id, slot_date, slot_time
+                    """,
+                    slot_id,           # $1
+                    confirmation,     # $2
+                    service_name,     # $3
+                    bare_doctor,      # $4
+                    patient_name,     # $5
+                    language,         # $6
+                    session_summary,  # $7
                 )
-                if not slot:
-                    print(f"⚠️  slot_id {slot_id} not found, booking without slot reference")
-                    slot_id = None
-                else:
-                    slot_date = slot["slot_date"]
-                    slot_time = slot["slot_time"]
 
-                    consumed = await mark_slot_unavailable(slot_id, conn=conn)
-                    if not consumed:
-                        raise ValueError(
-                            "Selected slot is no longer available. Please choose another slot."
-                        )
+                if not row:
+                    raise ValueError(
+                        "Selected slot is no longer available. Please choose another slot."
+                    )
 
-            row = await conn.fetchrow(
-                "INSERT INTO bookings"
-                "  (confirmation_number, slot_id, service_id, doctor_id,"
-                "   service_name, doctor_name, patient_name,"
-                "   slot_date, slot_time, language, session_summary)"
-                " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
-                " RETURNING id",
-                confirmation, slot_id, service_id, doctor_id,
-                service_name, bare_doctor, patient_name,
-                slot_date, slot_time, language, session_summary,
-            )
-            new_id = row["id"] if row else None
+                slot_date = row["slot_date"]
+                slot_time = row["slot_time"]
+                new_id = row["id"] if row else None
 
+                dt_slot_ms = (time.perf_counter() - t_slot0) * 1000.0
+                print(
+                    f"[save_booking] slot consume+insert {dt_slot_ms:.1f}ms (slot_id={slot_id!r})",
+                    flush=True,
+                )
+
+            # Fallback: if slot_id missing, resolve by name + insert.
+            if slot_id is None and (not doctor_id or not service_id):
+                t_resolve0 = time.perf_counter()
+                service, doctor = await asyncio.gather(
+                    get_service_by_name(service_name),
+                    get_doctor_by_name(bare_doctor),
+                )
+                dt_resolve_ms = (time.perf_counter() - t_resolve0) * 1000.0
+                service_id = service["id"] if service else None
+                doctor_id = doctor["id"] if doctor else None
+
+                if not doctor_id:
+                    log.warning(
+                        "[save_booking] Could not resolve doctor_id for name=%r (bare=%r)",
+                        doctor_name,
+                        bare_doctor,
+                    )
+
+            dt_tx_ms = (time.perf_counter() - t_tx0) * 1000.0
+            if slot_id is None:
+                t_insert0 = time.perf_counter()
+                row = await conn.fetchrow(
+                    "INSERT INTO bookings"
+                    "  (confirmation_number, slot_id, service_id, doctor_id,"
+                    "   service_name, doctor_name, patient_name,"
+                    "   slot_date, slot_time, language, session_summary)"
+                    " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+                    " RETURNING id",
+                    confirmation, slot_id, service_id, doctor_id,
+                    service_name, bare_doctor, patient_name,
+                    slot_date, slot_time, language, session_summary,
+                )
+                dt_insert_ms = (time.perf_counter() - t_insert0) * 1000.0
+                new_id = row["id"] if row else None
+
+    dt_total_ms = (time.perf_counter() - t_total0) * 1000.0
+    print(
+        f"[save_booking] completed total {dt_total_ms:.1f}ms "
+        f"(pool_acquire {dt_acquire_ms:.1f}ms, tx {dt_tx_ms:.1f}ms, insert {dt_insert_ms:.1f}ms, "
+        f"slot_consume {dt_slot_ms:.1f}ms, resolve_ids {dt_resolve_ms:.1f}ms)",
+        flush=True,
+    )
     return {
         "id":                  new_id,
         "confirmation_number": confirmation,
