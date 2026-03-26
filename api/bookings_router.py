@@ -1,7 +1,7 @@
 """
 RAG Backend — api/bookings_router.py
 ========================================
-Full CRUD for bookings with advanced filtering.
+
 
 POST   /bookings/              — create booking (called by agent)
 GET    /bookings/              — list all bookings with optional filters
