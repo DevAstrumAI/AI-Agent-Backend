@@ -137,11 +137,19 @@ async def list_services(
         with _cache_lock:
             cached = _cache_get(_services_cache)
         if cached is None:
+            t0 = time.perf_counter()
             services = await get_all_services()
+            dt_ms = (time.perf_counter() - t0) * 1000.0
             with _cache_lock:
                 _cache_set(_services_cache, services, _SERVICES_CACHE_TTL_S)
+            msg = f"[HTTP][clinic][services] all returned={len(services)} in {dt_ms:.1f}ms"
+            print(msg, flush=True)
+            log.info(msg)
         else:
             services = cached  # type: ignore[assignment]
+            msg = f"[HTTP][clinic][services] all returned={len(services)} (cache hit)"
+            print(msg, flush=True)
+            log.info(msg)
 
     return {
         "services": services,

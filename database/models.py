@@ -44,7 +44,7 @@ async def init_db():
 
     url = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-    _pool = await asyncpg.create_pool(url, min_size=2, max_size=10)
+    _pool = await asyncpg.create_pool(url, min_size=5, max_size=10)
 
     async with _pool.acquire() as conn:
         await conn.execute(

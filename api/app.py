@@ -56,6 +56,19 @@ async def lifespan(app: FastAPI):
         print("\n🔧 Initializing retriever...")
         _retriever = HybridRetriever(_chunks)
 
+        # ── Warmup: pre-heat the embedding HTTP connection pool ───────────────
+        # The first query to OpenAI's embedding API always takes 2x longer due
+        # to TLS negotiation and connection pool setup. Firing a cheap dummy
+        # query here so every real user query gets the fast steady-state path.
+        print("\n🔥 Warming up embedding model...")
+        try:
+            t_warm = time.time()
+            await loop.run_in_executor(None, _retriever.retrieve, "warmup", 1)
+            print(f"   ✅ Embedding warmed in {(time.time()-t_warm)*1000:.0f}ms")
+        except Exception as warm_err:
+            # Non-fatal — warmup failure only affects first-query latency
+            print(f"   ⚠️  Warmup skipped: {warm_err}")
+
         elapsed         = time.time() - t0
         _pipeline_ready = True
         _startup_time   = elapsed
@@ -63,6 +76,7 @@ async def lifespan(app: FastAPI):
         print(f"\n{'='*60}")
         print(f"  ✅ READY in {elapsed:.1f}s  |  {len(_chunks)} chunks indexed")
         print(f"{'='*60}\n")
+
 
     except Exception as e:
         _pipeline_error = str(e)
@@ -177,7 +191,10 @@ def ask_question(req: AskRequest):
 @app.post("/retrieve")
 def retrieve_chunks(req: RetrieveRequest):
     require_pipeline()
+    t0 = time.perf_counter()
     results = _retriever.retrieve_with_scores(req.query, top_n=req.k)
+    dt_ms = (time.perf_counter() - t0) * 1000.0
+    print(f"[HTTP][rag] POST /retrieve query={req.query!r} in {dt_ms:.1f}ms", flush=True)
     return {
         "query":   req.query,
         "results": [
